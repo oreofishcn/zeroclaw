@@ -1,2 +1,1 @@
-mod support;
-mod system;
+// Minimal build intentionally has no system test modules.

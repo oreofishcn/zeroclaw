@@ -1,2 +1,1 @@
-mod live;
-mod support;
+// Minimal build intentionally has no live test modules.
