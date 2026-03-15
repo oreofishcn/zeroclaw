@@ -3530,6 +3530,8 @@ pub struct ChannelsConfig {
     pub mattermost: Option<MattermostConfig>,
     /// Webhook channel configuration.
     pub webhook: Option<WebhookConfig>,
+    /// Embedded web chat channel configuration.
+    pub web: Option<WebChannelConfig>,
     /// iMessage channel configuration (macOS only).
     pub imessage: Option<IMessageConfig>,
     /// Matrix channel configuration.
@@ -3604,6 +3606,10 @@ impl ChannelsConfig {
             (
                 Box::new(ConfigWrapper::new(self.mattermost.as_ref())),
                 self.mattermost.is_some(),
+            ),
+            (
+                Box::new(ConfigWrapper::new(self.web.as_ref())),
+                self.web.as_ref().is_some_and(|cfg| cfg.enabled),
             ),
             (
                 Box::new(ConfigWrapper::new(self.imessage.as_ref())),
@@ -3696,6 +3702,7 @@ impl Default for ChannelsConfig {
             slack: None,
             mattermost: None,
             webhook: None,
+            web: None,
             imessage: None,
             matrix: None,
             signal: None,
@@ -3871,6 +3878,23 @@ impl ChannelConfig for WebhookConfig {
     }
     fn desc() -> &'static str {
         "HTTP endpoint"
+    }
+}
+
+/// Embedded web chat channel configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WebChannelConfig {
+    /// Enable the in-process web channel bridge.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl ChannelConfig for WebChannelConfig {
+    fn name() -> &'static str {
+        "Web"
+    }
+    fn desc() -> &'static str {
+        "embedded dashboard chat"
     }
 }
 
@@ -7369,6 +7393,7 @@ default_temperature = 0.7
                 slack: None,
                 mattermost: None,
                 webhook: None,
+                web: None,
                 imessage: None,
                 matrix: None,
                 signal: None,
@@ -8093,6 +8118,7 @@ allowed_users = ["@ops:matrix.org"]
             slack: None,
             mattermost: None,
             webhook: None,
+            web: None,
             imessage: Some(IMessageConfig {
                 allowed_contacts: vec!["+1".into()],
             }),
@@ -8321,6 +8347,7 @@ channel_id = "C123"
             slack: None,
             mattermost: None,
             webhook: None,
+            web: None,
             imessage: None,
             matrix: None,
             signal: None,

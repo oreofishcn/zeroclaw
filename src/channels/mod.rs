@@ -40,6 +40,7 @@ pub mod traits;
 pub mod transcription;
 pub mod tts;
 pub mod wati;
+pub mod web;
 pub mod wecom;
 pub mod whatsapp;
 #[cfg(feature = "whatsapp-web")]
@@ -72,6 +73,7 @@ pub use traits::{Channel, SendMessage};
 #[allow(unused_imports)]
 pub use tts::{TtsManager, TtsProvider};
 pub use wati::WatiChannel;
+pub use web::WebChannel;
 pub use wecom::WeComChannel;
 pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
@@ -100,6 +102,34 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use tokio_util::sync::CancellationToken;
+
+#[derive(Clone)]
+pub struct WebRuntimeHandle {
+    tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
+    channel: Arc<WebChannel>,
+}
+
+impl WebRuntimeHandle {
+    pub fn disconnected() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        Self {
+            tx,
+            channel: Arc::new(WebChannel::new()),
+        }
+    }
+
+    pub async fn send(&self, message: traits::ChannelMessage) -> Result<()> {
+        self.tx
+            .send(message)
+            .await
+            .map_err(|e| anyhow::anyhow!("web runtime unavailable: {e}"))
+    }
+
+    pub fn channel(&self) -> Arc<WebChannel> {
+        Arc::clone(&self.channel)
+    }
+}
 
 /// Observer wrapper that forwards tool-call events to a channel sender
 /// for real-time threaded notifications.
@@ -224,6 +254,7 @@ enum ChannelRuntimeCommand {
     ShowModel,
     SetModel(String),
     NewSession,
+    CancelSession,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -280,6 +311,7 @@ impl InterruptOnNewMessageConfig {
         match channel {
             "telegram" => self.telegram,
             "slack" => self.slack,
+            "web" => true,
             _ => false,
         }
     }
@@ -370,6 +402,9 @@ fn conversation_history_key(msg: &traits::ChannelMessage) -> String {
     // Include thread_ts for per-topic session isolation in forum groups
     match &msg.thread_ts {
         Some(tid) => format!("{}_{}_{}", msg.channel, tid, msg.sender),
+        None if msg.channel == "web" => {
+            format!("{}_{}_{}", msg.channel, msg.reply_target, msg.sender)
+        }
         None => format!("{}_{}", msg.channel, msg.sender),
     }
 }
@@ -630,10 +665,6 @@ fn supports_runtime_model_switch(channel_name: &str) -> bool {
 }
 
 fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRuntimeCommand> {
-    if !supports_runtime_model_switch(channel_name) {
-        return None;
-    }
-
     let trimmed = content.trim();
     if !trimmed.starts_with('/') {
         return None;
@@ -649,6 +680,9 @@ fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRun
 
     match base_command.as_str() {
         "/models" => {
+            if !supports_runtime_model_switch(channel_name) {
+                return None;
+            }
             if let Some(provider) = parts.next() {
                 Some(ChannelRuntimeCommand::SetProvider(
                     provider.trim().to_string(),
@@ -658,6 +692,9 @@ fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRun
             }
         }
         "/model" => {
+            if !supports_runtime_model_switch(channel_name) {
+                return None;
+            }
             let model = parts.collect::<Vec<_>>().join(" ").trim().to_string();
             if model.is_empty() {
                 Some(ChannelRuntimeCommand::ShowModel)
@@ -666,6 +703,7 @@ fn parse_runtime_command(channel_name: &str, content: &str) -> Option<ChannelRun
             }
         }
         "/new" => Some(ChannelRuntimeCommand::NewSession),
+        "/cancel" if channel_name == "web" => Some(ChannelRuntimeCommand::CancelSession),
         _ => None,
     }
 }
@@ -1298,6 +1336,9 @@ async fn handle_runtime_command_if_needed(
             clear_sender_history(ctx, &sender_key);
             "Conversation history cleared. Starting fresh.".to_string()
         }
+        ChannelRuntimeCommand::CancelSession => {
+            return true;
+        }
     };
 
     if let Err(err) = channel
@@ -1704,6 +1745,135 @@ fn compute_max_in_flight_messages(channel_count: usize) -> usize {
             CHANNEL_MIN_IN_FLIGHT_MESSAGES,
             CHANNEL_MAX_IN_FLIGHT_MESSAGES,
         )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_runtime_context(
+    config: &Config,
+    provider: Arc<dyn Provider>,
+    provider_name: String,
+    mem: Arc<dyn Memory>,
+    tools_registry: Arc<Vec<Box<dyn Tool>>>,
+    observer: Arc<dyn Observer>,
+    system_prompt: String,
+    model: String,
+    temperature: f64,
+    channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
+) -> Arc<ChannelRuntimeContext> {
+    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
+    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
+    let provider_runtime_options = providers::ProviderRuntimeOptions {
+        auth_profile_override: None,
+        provider_api_url: config.api_url.clone(),
+        zeroclaw_dir: config.config_path.parent().map(PathBuf::from),
+        secrets_encrypt: config.secrets.encrypt,
+        reasoning_enabled: config.runtime.reasoning_enabled,
+        provider_timeout_secs: Some(config.provider_timeout_secs),
+        extra_headers: config.extra_headers.clone(),
+        api_path: config.api_path.clone(),
+    };
+    let message_timeout_secs =
+        effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
+    let interrupt_on_new_message = config
+        .channels_config
+        .telegram
+        .as_ref()
+        .is_some_and(|tg| tg.interrupt_on_new_message);
+    let interrupt_on_new_message_slack = config
+        .channels_config
+        .slack
+        .as_ref()
+        .is_some_and(|sl| sl.interrupt_on_new_message);
+
+    Arc::new(ChannelRuntimeContext {
+        channels_by_name,
+        provider,
+        default_provider: Arc::new(provider_name),
+        memory: mem,
+        tools_registry,
+        observer,
+        system_prompt: Arc::new(system_prompt),
+        model: Arc::new(model),
+        temperature,
+        auto_save_memory: config.memory.auto_save,
+        max_tool_iterations: config.agent.max_tool_iterations,
+        min_relevance_score: config.memory.min_relevance_score,
+        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        route_overrides: Arc::new(Mutex::new(HashMap::new())),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+        reliability: Arc::new(config.reliability.clone()),
+        provider_runtime_options,
+        workspace_dir: Arc::new(config.workspace_dir.clone()),
+        message_timeout_secs,
+        interrupt_on_new_message: InterruptOnNewMessageConfig {
+            telegram: interrupt_on_new_message,
+            slack: interrupt_on_new_message_slack,
+        },
+        multimodal: config.multimodal.clone(),
+        hooks: if config.hooks.enabled {
+            let mut runner = crate::hooks::HookRunner::new();
+            if config.hooks.builtin.command_logger {
+                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
+            }
+            if config.hooks.builtin.webhook_audit.enabled {
+                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
+                    config.hooks.builtin.webhook_audit.clone(),
+                )));
+            }
+            Some(Arc::new(runner))
+        } else {
+            None
+        },
+        non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
+        tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
+        model_routes: Arc::new(config.model_routes.clone()),
+        ack_reactions: config.channels_config.ack_reactions,
+        show_tool_calls: config.channels_config.show_tool_calls,
+    })
+}
+
+pub fn start_web_runtime(
+    config: &Config,
+    provider: Arc<dyn Provider>,
+    provider_name: String,
+    mem: Arc<dyn Memory>,
+    tools_registry: Arc<Vec<Box<dyn Tool>>>,
+    observer: Arc<dyn Observer>,
+    system_prompt: String,
+    model: String,
+    temperature: f64,
+) -> WebRuntimeHandle {
+    let web_channel = Arc::new(WebChannel::new());
+    let channels_by_name = Arc::new(HashMap::from([(
+        web_channel.name().to_string(),
+        Arc::clone(&web_channel) as Arc<dyn Channel>,
+    )]));
+    let runtime_ctx = build_runtime_context(
+        config,
+        provider,
+        provider_name,
+        mem,
+        tools_registry,
+        observer,
+        system_prompt,
+        model,
+        temperature,
+        channels_by_name,
+    );
+    let max_in_flight_messages = compute_max_in_flight_messages(1);
+    let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
+    tokio::spawn(run_message_dispatch_loop(
+        rx,
+        runtime_ctx,
+        max_in_flight_messages,
+    ));
+
+    WebRuntimeHandle {
+        tx,
+        channel: web_channel,
+    }
 }
 
 fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
@@ -3231,6 +3401,18 @@ fn collect_configured_channels(
         });
     }
 
+    if config
+        .channels_config
+        .web
+        .as_ref()
+        .is_some_and(|web| web.enabled)
+    {
+        channels.push(ConfiguredChannel {
+            display_name: "Web",
+            channel: Arc::new(WebChannel::new()),
+        });
+    }
+
     if let Some(ref wa) = config.channels_config.whatsapp {
         if wa.is_ambiguous_config() {
             tracing::warn!(
@@ -3845,31 +4027,17 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
-    let message_timeout_secs =
-        effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
-    let interrupt_on_new_message = config
-        .channels_config
-        .telegram
-        .as_ref()
-        .is_some_and(|tg| tg.interrupt_on_new_message);
-    let interrupt_on_new_message_slack = config
-        .channels_config
-        .slack
-        .as_ref()
-        .is_some_and(|sl| sl.interrupt_on_new_message);
-
-    let runtime_ctx = Arc::new(ChannelRuntimeContext {
-        channels_by_name,
-        provider: Arc::clone(&provider),
-        default_provider: Arc::new(provider_name),
-        memory: Arc::clone(&mem),
-        tools_registry: Arc::clone(&tools_registry),
+    let runtime_ctx = build_runtime_context(
+        &config,
+        Arc::clone(&provider),
+        provider_name,
+        Arc::clone(&mem),
+        Arc::clone(&tools_registry),
         observer,
-        system_prompt: Arc::new(system_prompt),
-        model: Arc::new(model.clone()),
+        system_prompt,
+        model.clone(),
         temperature,
+<<<<<<< HEAD
         auto_save_memory: config.memory.auto_save,
         max_tool_iterations: config.agent.max_tool_iterations,
         min_relevance_score: config.memory.min_relevance_score,
@@ -3923,6 +4091,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         },
         approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
     });
+=======
+        channels_by_name,
+    );
+>>>>>>> e012a6a9 (feat(web): route dashboard chat through channel runtime)
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
     if let Some(ref store) = runtime_ctx.session_store {
@@ -6780,6 +6952,52 @@ BTC is currently around $65,000 based on latest tool output."#
         );
     }
 
+    #[test]
+    fn conversation_history_key_is_isolated_per_web_session() {
+        let msg1 = traits::ChannelMessage {
+            id: "msg_1".into(),
+            sender: "local-user".into(),
+            reply_target: "session-a".into(),
+            content: "first".into(),
+            channel: "web".into(),
+            timestamp: 1,
+            thread_ts: None,
+        };
+        let msg2 = traits::ChannelMessage {
+            id: "msg_2".into(),
+            sender: "local-user".into(),
+            reply_target: "session-b".into(),
+            content: "second".into(),
+            channel: "web".into(),
+            timestamp: 2,
+            thread_ts: None,
+        };
+
+        assert_ne!(
+            conversation_history_key(&msg1),
+            conversation_history_key(&msg2)
+        );
+    }
+
+    #[test]
+    fn interrupt_on_new_message_is_enabled_for_web_sessions() {
+        let config = InterruptOnNewMessageConfig {
+            telegram: false,
+            slack: false,
+        };
+
+        assert!(config.enabled_for_channel("web"));
+    }
+
+    #[test]
+    fn parse_runtime_command_supports_web_cancel_only() {
+        assert!(matches!(
+            parse_runtime_command("web", "/cancel"),
+            Some(ChannelRuntimeCommand::CancelSession)
+        ));
+        assert!(parse_runtime_command("telegram", "/cancel").is_none());
+    }
+
     #[tokio::test]
     async fn autosave_keys_preserve_multiple_conversation_facts() {
         let tmp = TempDir::new().unwrap();
@@ -7448,6 +7666,18 @@ This is an example JSON object for profile settings."#;
         assert!(channels
             .iter()
             .any(|entry| entry.channel.name() == "mattermost"));
+    }
+
+    #[test]
+    fn collect_configured_channels_includes_web_when_enabled() {
+        let mut config = Config::default();
+        config.channels_config.web =
+            Some(crate::config::schema::WebChannelConfig { enabled: true });
+
+        let channels = collect_configured_channels(&config, "test");
+
+        assert!(channels.iter().any(|entry| entry.display_name == "Web"));
+        assert!(channels.iter().any(|entry| entry.channel.name() == "web"));
     }
 
     struct AlwaysFailChannel {
