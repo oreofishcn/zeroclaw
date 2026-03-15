@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
 import type { WsMessage } from '@/types/api';
-import { WebSocketClient } from '@/lib/ws';
+import { WebSocketClient, getOrCreateSessionId } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
 import { useDraft } from '@/hooks/useDraft';
 import { t } from '@/lib/i18n';
@@ -14,10 +14,41 @@ interface ChatMessage {
 }
 
 const DRAFT_KEY = 'agent-chat';
+const CHAT_STORAGE_PREFIX = 'zeroclaw_agent_chat_';
+
+function chatStorageKey(): string {
+  return `${CHAT_STORAGE_PREFIX}${getOrCreateSessionId()}`;
+}
+
+function loadPersistedMessages(): ChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(chatStorageKey());
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as Array<
+      Omit<ChatMessage, 'timestamp'> & { timestamp: string }
+    >;
+    return parsed.map((message) => ({
+      ...message,
+      timestamp: new Date(message.timestamp),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function persistMessages(messages: ChatMessage[]): void {
+  try {
+    sessionStorage.setItem(chatStorageKey(), JSON.stringify(messages));
+  } catch {
+    // Ignore storage failures and keep the in-memory chat usable.
+  }
+}
 
 export default function AgentChat() {
   const { draft, saveDraft, clearDraft } = useDraft(DRAFT_KEY);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadPersistedMessages());
   const [input, setInput] = useState(draft);
   const [typing, setTyping] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -100,6 +131,11 @@ export default function AgentChat() {
           ]);
           break;
 
+        case 'message_cancelled':
+          setTyping(false);
+          pendingContentRef.current = '';
+          break;
+
         case 'error':
           setMessages((prev) => [
             ...prev,
@@ -123,6 +159,10 @@ export default function AgentChat() {
       ws.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    persistMessages(messages);
+  }, [messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
