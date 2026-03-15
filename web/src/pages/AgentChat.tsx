@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { WsMessage } from '@/types/api';
 import { WebSocketClient, getOrCreateSessionId } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
@@ -278,7 +280,24 @@ export default function AgentChat() {
                     : 'linear-gradient(135deg, rgba(13,13,32,0.8), rgba(10,10,26,0.6))'
                 }}
               >
-                <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                {msg.role === 'agent' ? (
+                  <div className="break-words text-sm text-inherit [&_a]:text-[#66b3ff] [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[#1a1a3e] [&_blockquote]:pl-4 [&_blockquote]:text-[#9fb3cc] [&_code]:rounded-md [&_code]:bg-[#060612] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_code]:text-[#8fd3ff] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-white [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-white [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-[#d9ecff] [&_hr]:my-4 [&_hr]:border-[#1a1a3e] [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-[#1a1a3e] [&_pre]:bg-[#050510] [&_pre]:p-3 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre]:text-[#d9ecff] [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_strong]:text-white [&_table]:table-electric [&_tbody_td]:px-4 [&_tbody_td]:py-3 [&_tbody_td]:align-top [&_tbody_td]:text-sm [&_tbody_td]:text-[#d9ecff] [&_thead_th]:text-left [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        table: ({ children }) => (
+                          <div className="my-4 overflow-x-auto rounded-xl border border-[#1a1a3e] bg-[#090916]">
+                            <table>{children}</table>
+                          </div>
+                        ),
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                )}
                 <p
                   className={`text-[10px] mt-1.5 ${
                     msg.role === 'user' ? 'text-white/50' : 'text-[#334060]'
