@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { WsMessage } from '@/types/api';
 import { WebSocketClient, getOrCreateSessionId } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
@@ -300,7 +302,24 @@ export default function AgentChat() {
                     : { background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)', color: 'var(--pc-text-primary)', }
                 }
               >
-                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                {msg.role === 'agent' ? (
+                  <div className="break-words text-sm text-inherit leading-relaxed [--chat-accent:var(--pc-accent)] [--chat-border:var(--pc-border)] [--chat-code-bg:var(--pc-bg)] [--chat-faint:var(--pc-text-faint)] [&_a]:text-[var(--chat-accent)] [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--chat-border)] [&_blockquote]:pl-4 [&_blockquote]:text-[var(--chat-faint)] [&_code]:rounded-md [&_code]:bg-[var(--chat-code-bg)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--chat-border)] [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-[var(--chat-border)] [&_pre]:bg-[var(--chat-code-bg)] [&_pre]:p-3 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:w-full [&_tbody_td]:px-4 [&_tbody_td]:py-3 [&_tbody_td]:align-top [&_tbody_td]:text-sm [&_thead_th]:text-left [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        table: ({ children }) => (
+                          <div className="my-4 overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg)' }}>
+                            <table>{children}</table>
+                          </div>
+                        ),
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                )}
                 <p
                   className="text-[10px] mt-1.5" style={{ color: msg.role === 'user' ? 'var(--pc-accent-light)' : 'var(--pc-text-faint)' }}>
                   {msg.timestamp.toLocaleTimeString()}
