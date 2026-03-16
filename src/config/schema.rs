@@ -123,7 +123,6 @@ pub struct Config {
     /// Security subsystem configuration (`[security]`).
     #[serde(default)]
     pub security: SecurityConfig,
-
     /// Backup tool configuration (`[backup]`).
     #[serde(default)]
     pub backup: BackupConfig,
@@ -139,7 +138,6 @@ pub struct Config {
     /// Conversational AI agent builder configuration (`[conversational_ai]`).
     #[serde(default)]
     pub conversational_ai: ConversationalAiConfig,
-
     /// Managed cybersecurity service configuration (`[security_ops]`).
     #[serde(default)]
     pub security_ops: SecurityOpsConfig,

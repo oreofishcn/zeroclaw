@@ -1802,6 +1802,150 @@ fn compute_max_in_flight_messages(channel_count: usize) -> usize {
         )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn build_runtime_context(
+    config: &Config,
+    provider: Arc<dyn Provider>,
+    provider_name: String,
+    mem: Arc<dyn Memory>,
+    tools_registry: Arc<Vec<Box<dyn Tool>>>,
+    observer: Arc<dyn Observer>,
+    system_prompt: String,
+    model: String,
+    temperature: f64,
+    channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
+) -> Arc<ChannelRuntimeContext> {
+    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
+    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
+    let provider_runtime_options = providers::ProviderRuntimeOptions {
+        auth_profile_override: None,
+        provider_api_url: config.api_url.clone(),
+        zeroclaw_dir: config.config_path.parent().map(PathBuf::from),
+        secrets_encrypt: config.secrets.encrypt,
+        reasoning_enabled: config.runtime.reasoning_enabled,
+        provider_timeout_secs: Some(config.provider_timeout_secs),
+        extra_headers: config.extra_headers.clone(),
+        api_path: config.api_path.clone(),
+    };
+    let message_timeout_secs =
+        effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
+    let interrupt_on_new_message = config
+        .channels_config
+        .telegram
+        .as_ref()
+        .is_some_and(|tg| tg.interrupt_on_new_message);
+    let interrupt_on_new_message_slack = config
+        .channels_config
+        .slack
+        .as_ref()
+        .is_some_and(|sl| sl.interrupt_on_new_message);
+
+    Arc::new(ChannelRuntimeContext {
+        channels_by_name,
+        provider,
+        default_provider: Arc::new(provider_name),
+        memory: mem,
+        tools_registry,
+        observer,
+        system_prompt: Arc::new(system_prompt),
+        model: Arc::new(model),
+        temperature,
+        auto_save_memory: config.memory.auto_save,
+        max_tool_iterations: config.agent.max_tool_iterations,
+        min_relevance_score: config.memory.min_relevance_score,
+        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        route_overrides: Arc::new(Mutex::new(HashMap::new())),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+        reliability: Arc::new(config.reliability.clone()),
+        provider_runtime_options,
+        workspace_dir: Arc::new(config.workspace_dir.clone()),
+        message_timeout_secs,
+        interrupt_on_new_message: InterruptOnNewMessageConfig {
+            telegram: interrupt_on_new_message,
+            slack: interrupt_on_new_message_slack,
+        },
+        multimodal: config.multimodal.clone(),
+        hooks: if config.hooks.enabled {
+            let mut runner = crate::hooks::HookRunner::new();
+            if config.hooks.builtin.command_logger {
+                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
+            }
+            if config.hooks.builtin.webhook_audit.enabled {
+                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
+                    config.hooks.builtin.webhook_audit.clone(),
+                )));
+            }
+            Some(Arc::new(runner))
+        } else {
+            None
+        },
+        non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
+        tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
+        model_routes: Arc::new(config.model_routes.clone()),
+        query_classification: config.query_classification.clone(),
+        ack_reactions: config.channels_config.ack_reactions,
+        show_tool_calls: config.channels_config.show_tool_calls,
+        session_store: if config.channels_config.session_persistence {
+            match session_store::SessionStore::new(&config.workspace_dir) {
+                Ok(store) => {
+                    tracing::info!("📂 Session persistence enabled");
+                    Some(Arc::new(store))
+                }
+                Err(e) => {
+                    tracing::warn!("Session persistence disabled: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        },
+        approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
+    })
+}
+
+pub fn start_web_runtime(
+    config: &Config,
+    provider: Arc<dyn Provider>,
+    provider_name: String,
+    mem: Arc<dyn Memory>,
+    tools_registry: Arc<Vec<Box<dyn Tool>>>,
+    observer: Arc<dyn Observer>,
+    system_prompt: String,
+    model: String,
+    temperature: f64,
+) -> WebRuntimeHandle {
+    let web_channel = Arc::new(WebChannel::new());
+    let channels_by_name = Arc::new(HashMap::from([(
+        web_channel.name().to_string(),
+        Arc::clone(&web_channel) as Arc<dyn Channel>,
+    )]));
+    let runtime_ctx = build_runtime_context(
+        config,
+        provider,
+        provider_name,
+        mem,
+        tools_registry,
+        observer,
+        system_prompt,
+        model,
+        temperature,
+        channels_by_name,
+    );
+    let max_in_flight_messages = compute_max_in_flight_messages(1);
+    let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
+    tokio::spawn(run_message_dispatch_loop(
+        rx,
+        runtime_ctx,
+        max_in_flight_messages,
+    ));
+
+    WebRuntimeHandle {
+        tx,
+        channel: web_channel,
+    }
+}
 fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
     if let Err(error) = result {
         tracing::error!("Channel message worker crashed: {error}");
@@ -4064,85 +4208,18 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
-    let message_timeout_secs =
-        effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
-    let interrupt_on_new_message = config
-        .channels_config
-        .telegram
-        .as_ref()
-        .is_some_and(|tg| tg.interrupt_on_new_message);
-    let interrupt_on_new_message_slack = config
-        .channels_config
-        .slack
-        .as_ref()
-        .is_some_and(|sl| sl.interrupt_on_new_message);
-
-    let runtime_ctx = Arc::new(ChannelRuntimeContext {
-        channels_by_name,
-        provider: Arc::clone(&provider),
-        default_provider: Arc::new(provider_name),
-        memory: Arc::clone(&mem),
-        tools_registry: Arc::clone(&tools_registry),
+    let runtime_ctx = build_runtime_context(
+        &config,
+        Arc::clone(&provider),
+        provider_name,
+        Arc::clone(&mem),
+        Arc::clone(&tools_registry),
         observer,
-        system_prompt: Arc::new(system_prompt),
-        model: Arc::new(model.clone()),
+        system_prompt,
+        model.clone(),
         temperature,
-        auto_save_memory: config.memory.auto_save,
-        max_tool_iterations: config.agent.max_tool_iterations,
-        min_relevance_score: config.memory.min_relevance_score,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
-        route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_key: config.api_key.clone(),
-        api_url: config.api_url.clone(),
-        reliability: Arc::new(config.reliability.clone()),
-        provider_runtime_options,
-        workspace_dir: Arc::new(config.workspace_dir.clone()),
-        message_timeout_secs,
-        interrupt_on_new_message: InterruptOnNewMessageConfig {
-            telegram: interrupt_on_new_message,
-            slack: interrupt_on_new_message_slack,
-        },
-        multimodal: config.multimodal.clone(),
-        hooks: if config.hooks.enabled {
-            let mut runner = crate::hooks::HookRunner::new();
-            if config.hooks.builtin.command_logger {
-                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
-            }
-            if config.hooks.builtin.webhook_audit.enabled {
-                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
-                    config.hooks.builtin.webhook_audit.clone(),
-                )));
-            }
-            Some(Arc::new(runner))
-        } else {
-            None
-        },
-        non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
-        tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
-        model_routes: Arc::new(config.model_routes.clone()),
-        query_classification: config.query_classification.clone(),
-        ack_reactions: config.channels_config.ack_reactions,
-        show_tool_calls: config.channels_config.show_tool_calls,
-        session_store: if config.channels_config.session_persistence {
-            match session_store::SessionStore::new(&config.workspace_dir) {
-                Ok(store) => {
-                    tracing::info!("📂 Session persistence enabled");
-                    Some(Arc::new(store))
-                }
-                Err(e) => {
-                    tracing::warn!("Session persistence disabled: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        },
-        approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
-        activated_tools: ch_activated_handle,
-    });
+        channels_by_name,
+    );
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
     if let Some(ref store) = runtime_ctx.session_store {

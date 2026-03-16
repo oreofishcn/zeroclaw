@@ -5921,6 +5921,8 @@ mod tests {
         let _workspace_env = EnvVarGuard::unset("ZEROCLAW_WORKSPACE");
         let _config_env = EnvVarGuard::unset("ZEROCLAW_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_string_lossy().into_owned();
+        let _home_env = EnvVarGuard::set("HOME", &home);
 
         let config = Box::pin(run_quick_setup_with_home(
             Some("sk-issue946"),
@@ -5948,6 +5950,8 @@ mod tests {
         let _workspace_env = EnvVarGuard::unset("ZEROCLAW_WORKSPACE");
         let _config_env = EnvVarGuard::unset("ZEROCLAW_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_string_lossy().into_owned();
+        let _home_env = EnvVarGuard::set("HOME", &home);
 
         let config = Box::pin(run_quick_setup_with_home(
             Some("sk-issue946"),
@@ -6001,6 +6005,8 @@ mod tests {
         let _workspace_env = EnvVarGuard::unset("ZEROCLAW_WORKSPACE");
         let _config_env = EnvVarGuard::unset("ZEROCLAW_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_string_lossy().into_owned();
+        let _home_env = EnvVarGuard::set("HOME", &home);
         let zeroclaw_dir = tmp.path().join(".zeroclaw");
         let config_path = zeroclaw_dir.join("config.toml");
 
@@ -6036,6 +6042,8 @@ mod tests {
     async fn quick_setup_respects_zero_claw_workspace_env_layout() {
         let _env_guard = env_lock().lock().await;
         let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_string_lossy().into_owned();
+        let _home_env = EnvVarGuard::set("HOME", &home);
         let workspace_root = tmp.path().join("zeroclaw-data");
         let workspace_dir = workspace_root.join("workspace");
         let expected_config_path = workspace_root.join(".zeroclaw").join("config.toml");
