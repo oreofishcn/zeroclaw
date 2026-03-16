@@ -14,7 +14,8 @@ pub mod static_files;
 pub mod ws;
 
 use crate::channels::{
-    Channel, LinqChannel, NextcloudTalkChannel, SendMessage, WatiChannel, WhatsAppChannel,
+    Channel, LinqChannel, NextcloudTalkChannel, SendMessage, WatiChannel, WebRuntimeHandle,
+    WhatsAppChannel,
 };
 use crate::config::Config;
 use crate::cost::CostTracker;
@@ -25,6 +26,7 @@ use crate::security::pairing::{constant_time_eq, is_public_bind, PairingGuard};
 use crate::security::SecurityPolicy;
 use crate::tools;
 use crate::tools::traits::ToolSpec;
+use crate::tools::Tool;
 use crate::util::truncate_with_ellipsis;
 use anyhow::{Context, Result};
 use axum::{
@@ -294,6 +296,32 @@ fn normalize_max_keys(configured: usize, fallback: usize) -> usize {
     }
 }
 
+fn build_web_runtime_system_prompt(
+    config: &Config,
+    model: &str,
+    tools: &[Box<dyn Tool>],
+) -> String {
+    let tool_descs: Vec<(&str, &str)> = tools
+        .iter()
+        .map(|tool| (tool.name(), tool.description()))
+        .collect();
+    let skills = crate::skills::load_skills_with_config(&config.workspace_dir, config);
+    let bootstrap_max_chars = if config.agent.compact_context {
+        Some(6000)
+    } else {
+        None
+    };
+
+    crate::channels::build_system_prompt(
+        &config.workspace_dir,
+        model,
+        &tool_descs,
+        &skills,
+        Some(&config.identity),
+        bootstrap_max_chars,
+    )
+}
+
 /// Shared state for all axum handlers
 #[derive(Clone)]
 pub struct AppState {
@@ -323,6 +351,8 @@ pub struct AppState {
     pub observer: Arc<dyn crate::observability::Observer>,
     /// Registered tool specs (for web dashboard tools page)
     pub tools_registry: Arc<Vec<ToolSpec>>,
+    /// Dedicated channel runtime for websocket chat sessions.
+    pub web_runtime: Arc<WebRuntimeHandle>,
     /// Cost tracker (optional, for web dashboard cost page)
     pub cost_tracker: Option<Arc<CostTracker>>,
     /// SSE broadcast channel for real-time events
@@ -649,6 +679,21 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             crate::observability::create_observer(&config.observability),
             event_tx.clone(),
         ));
+    let tools_registry_runtime = Arc::new(tools_registry_raw);
+    let web_runtime = Arc::new(crate::channels::start_web_runtime(
+        &config,
+        Arc::clone(&provider),
+        config
+            .default_provider
+            .clone()
+            .unwrap_or_else(|| "openrouter".to_string()),
+        Arc::clone(&mem),
+        Arc::clone(&tools_registry_runtime),
+        Arc::clone(&broadcast_observer),
+        build_web_runtime_system_prompt(&config, &model, tools_registry_runtime.as_ref()),
+        model.clone(),
+        temperature,
+    ));
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -676,6 +721,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         wati: wati_channel,
         observer: broadcast_observer,
         tools_registry,
+        web_runtime,
         cost_tracker,
         event_tx,
         shutdown_tx,
@@ -1825,6 +1871,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -1877,6 +1924,7 @@ mod tests {
             wati: None,
             observer,
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2253,6 +2301,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2319,6 +2368,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2397,6 +2447,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2447,6 +2498,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2502,6 +2554,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2562,6 +2615,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,
@@ -2618,6 +2672,7 @@ mod tests {
             wati: None,
             observer: Arc::new(crate::observability::NoopObserver),
             tools_registry: Arc::new(Vec::new()),
+            web_runtime: Arc::new(WebRuntimeHandle::disconnected()),
             cost_tracker: None,
             event_tx: tokio::sync::broadcast::channel(16).0,
             shutdown_tx: tokio::sync::watch::channel(false).0,

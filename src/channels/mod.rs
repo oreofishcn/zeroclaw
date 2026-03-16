@@ -46,6 +46,7 @@ pub mod transcription;
 pub mod tts;
 pub mod twitter;
 pub mod wati;
+pub mod web;
 pub mod webhook;
 pub mod wecom;
 pub mod whatsapp;
@@ -83,6 +84,7 @@ pub use traits::{Channel, SendMessage};
 pub use tts::{TtsManager, TtsProvider};
 pub use twitter::TwitterChannel;
 pub use wati::WatiChannel;
+pub use web::WebChannel;
 pub use webhook::WebhookChannel;
 pub use wecom::WeComChannel;
 pub use whatsapp::WhatsAppChannel;
@@ -112,6 +114,34 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use tokio_util::sync::CancellationToken;
+
+#[derive(Clone)]
+pub struct WebRuntimeHandle {
+    tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
+    channel: Arc<WebChannel>,
+}
+
+impl WebRuntimeHandle {
+    pub fn disconnected() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        Self {
+            tx,
+            channel: Arc::new(WebChannel::new()),
+        }
+    }
+
+    pub async fn send(&self, message: traits::ChannelMessage) -> Result<()> {
+        self.tx
+            .send(message)
+            .await
+            .map_err(|e| anyhow::anyhow!("web runtime unavailable: {e}"))
+    }
+
+    pub fn channel(&self) -> Arc<WebChannel> {
+        Arc::clone(&self.channel)
+    }
+}
 
 /// Observer wrapper that forwards tool-call events to a channel sender
 /// for real-time threaded notifications.
