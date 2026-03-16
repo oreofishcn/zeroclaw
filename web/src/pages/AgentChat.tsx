@@ -47,6 +47,29 @@ function persistMessages(messages: ChatMessage[]): void {
   }
 }
 
+function extractToolName(msg: WsMessage): string {
+  if (msg.name && msg.name.trim()) {
+    return msg.name.trim();
+  }
+
+  const content = msg.content?.trim();
+  if (!content) {
+    return 'tool';
+  }
+
+  const quotedName = content.match(/`([^`]+)`/);
+  if (quotedName?.[1]) {
+    return quotedName[1];
+  }
+
+  const plainName = content.match(/^Running\s+([A-Za-z0-9_.-]+)/i);
+  if (plainName?.[1]) {
+    return plainName[1];
+  }
+
+  return 'tool';
+}
+
 export default function AgentChat() {
   const { draft, saveDraft, clearDraft } = useDraft(DRAFT_KEY);
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadPersistedMessages());
@@ -114,22 +137,13 @@ export default function AgentChat() {
             {
               id: generateUUID(),
               role: 'agent',
-              content: `[Tool Call] ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
+              content: `Running ${extractToolName(msg)}...`,
               timestamp: new Date(),
             },
           ]);
           break;
 
         case 'tool_result':
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: generateUUID(),
-              role: 'agent',
-              content: `[Tool Result] ${msg.output ?? ''}`,
-              timestamp: new Date(),
-            },
-          ]);
           break;
 
         case 'message_cancelled':
