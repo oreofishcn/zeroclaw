@@ -1933,6 +1933,7 @@ pub fn start_web_runtime(
         temperature,
         channels_by_name,
     );
+    hydrate_persisted_session_histories(&runtime_ctx);
     let max_in_flight_messages = compute_max_in_flight_messages(1);
     let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
     tokio::spawn(run_message_dispatch_loop(
@@ -1944,6 +1945,27 @@ pub fn start_web_runtime(
     WebRuntimeHandle {
         tx,
         channel: web_channel,
+    }
+}
+
+fn hydrate_persisted_session_histories(runtime_ctx: &ChannelRuntimeContext) {
+    if let Some(ref store) = runtime_ctx.session_store {
+        let mut hydrated = 0usize;
+        let mut histories = runtime_ctx
+            .conversation_histories
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for key in store.list_sessions() {
+            let msgs = store.load(&key);
+            if !msgs.is_empty() {
+                hydrated += 1;
+                histories.insert(key, msgs);
+            }
+        }
+        drop(histories);
+        if hydrated > 0 {
+            tracing::info!("📂 Restored {hydrated} session(s) from disk");
+        }
     }
 }
 fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
@@ -4221,25 +4243,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         channels_by_name,
     );
 
-    // Hydrate in-memory conversation histories from persisted JSONL session files.
-    if let Some(ref store) = runtime_ctx.session_store {
-        let mut hydrated = 0usize;
-        let mut histories = runtime_ctx
-            .conversation_histories
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        for key in store.list_sessions() {
-            let msgs = store.load(&key);
-            if !msgs.is_empty() {
-                hydrated += 1;
-                histories.insert(key, msgs);
-            }
-        }
-        drop(histories);
-        if hydrated > 0 {
-            tracing::info!("📂 Restored {hydrated} session(s) from disk");
-        }
-    }
+    hydrate_persisted_session_histories(&runtime_ctx);
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
 
@@ -4313,6 +4317,53 @@ mod tests {
             channel_message_timeout_budget_secs(300, 10),
             300 * CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP
         );
+    }
+
+    #[test]
+    fn hydrate_persisted_session_histories_restores_web_sessions() {
+        let workspace = make_workspace();
+        let store = session_store::SessionStore::new(workspace.path()).unwrap();
+        store
+            .append("web_session-a", &ChatMessage::user("hello"))
+            .unwrap();
+        store
+            .append("web_session-a", &ChatMessage::assistant("hi"))
+            .unwrap();
+
+        let mut config = Config::default();
+        config.workspace_dir = workspace.path().to_path_buf();
+        config.channels_config.session_persistence = true;
+
+        let web_channel: Arc<dyn Channel> = Arc::new(WebChannel::new());
+        let channels_by_name = Arc::new(HashMap::from([(
+            "web".to_string(),
+            Arc::clone(&web_channel),
+        )]));
+        let runtime_ctx = build_runtime_context(
+            &config,
+            Arc::new(DummyProvider),
+            "test-provider".to_string(),
+            Arc::new(NoopMemory),
+            Arc::new(vec![]),
+            Arc::new(NoopObserver),
+            "system".to_string(),
+            "test-model".to_string(),
+            0.0,
+            channels_by_name,
+        );
+
+        hydrate_persisted_session_histories(&runtime_ctx);
+
+        let histories = runtime_ctx
+            .conversation_histories
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let restored = histories
+            .get("web_session-a")
+            .expect("web session should be hydrated");
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].content, "hello");
+        assert_eq!(restored[1].content, "hi");
     }
 
     #[test]
