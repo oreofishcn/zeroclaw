@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
+use uuid::Uuid;
 #[cfg(test)]
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
@@ -31,24 +32,54 @@ impl WebChannelEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSessionRegistration {
+    session_id: String,
+    connection_id: Uuid,
+}
+
+#[derive(Debug)]
+struct RegisteredSession {
+    connection_id: Uuid,
+    tx: UnboundedSender<WebChannelEvent>,
+}
+
 #[derive(Debug, Default)]
 struct WebSessionRegistry {
-    sessions: RwLock<HashMap<String, UnboundedSender<WebChannelEvent>>>,
+    sessions: RwLock<HashMap<String, RegisteredSession>>,
 }
 
 impl WebSessionRegistry {
-    fn register(&self, session_id: impl Into<String>, tx: UnboundedSender<WebChannelEvent>) {
+    fn register(
+        &self,
+        session_id: impl Into<String>,
+        tx: UnboundedSender<WebChannelEvent>,
+    ) -> WebSessionRegistration {
+        let registration = WebSessionRegistration {
+            session_id: session_id.into(),
+            connection_id: Uuid::new_v4(),
+        };
         self.sessions
             .write()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(session_id.into(), tx);
+            .insert(
+                registration.session_id.clone(),
+                RegisteredSession {
+                    connection_id: registration.connection_id,
+                    tx,
+                },
+            );
+        registration
     }
 
-    fn unregister(&self, session_id: &str) {
-        self.sessions
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(session_id);
+    fn unregister(&self, registration: &WebSessionRegistration) {
+        let mut sessions = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+        let should_remove = sessions
+            .get(&registration.session_id)
+            .is_some_and(|current| current.connection_id == registration.connection_id);
+        if should_remove {
+            sessions.remove(&registration.session_id);
+        }
     }
 
     fn emit(
@@ -63,7 +94,7 @@ impl WebSessionRegistry {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .get(session_id)
-            .cloned()
+            .map(|session| session.tx.clone())
             .ok_or_else(|| anyhow!("unknown web session: {session_id}"))?;
 
         tx.send(WebChannelEvent::new(
@@ -87,19 +118,19 @@ impl WebChannel {
         &self,
         session_id: impl Into<String>,
         tx: UnboundedSender<WebChannelEvent>,
-    ) {
-        self.registry.register(session_id, tx);
+    ) -> WebSessionRegistration {
+        self.registry.register(session_id, tx)
     }
 
-    pub fn unregister_session(&self, session_id: &str) {
-        self.registry.unregister(session_id);
+    pub fn unregister_session(&self, registration: &WebSessionRegistration) {
+        self.registry.unregister(registration);
     }
 
     #[cfg(test)]
     pub fn for_test(session_id: &str) -> (Self, UnboundedReceiver<WebChannelEvent>) {
         let channel = Self::new();
         let (tx, rx) = unbounded_channel();
-        channel.register_session(session_id.to_string(), tx);
+        let _registration = channel.register_session(session_id.to_string(), tx);
         (channel, rx)
     }
 }
@@ -277,5 +308,23 @@ mod tests {
             .expect_err("unknown session should return error");
 
         assert!(err.to_string().contains("unknown web session"));
+    }
+
+    #[tokio::test]
+    async fn stale_unregister_does_not_remove_newer_session_registration() {
+        let channel = WebChannel::new();
+        let (old_tx, _old_rx) = unbounded_channel();
+        let old_registration = channel.register_session("session-a".to_string(), old_tx);
+        let (new_tx, mut new_rx) = unbounded_channel();
+        let _new_registration = channel.register_session("session-a".to_string(), new_tx);
+
+        channel.unregister_session(&old_registration);
+        channel
+            .send(&SendMessage::new("hello", "session-a"))
+            .await
+            .expect("newer registration should stay active");
+
+        let event = new_rx.recv().await.expect("new registration should receive event");
+        assert_eq!(event.content.as_deref(), Some("hello"));
     }
 }

@@ -133,7 +133,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, session_id: Option<St
     let (mut sender, mut receiver) = socket.split();
     let (local_tx, mut local_rx) = unbounded_channel::<String>();
     let (session_tx, mut session_rx) = unbounded_channel::<WebChannelEvent>();
-    state
+    let registration = state
         .web_runtime
         .channel()
         .register_session(session_id.clone(), session_tx);
@@ -212,7 +212,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, session_id: Option<St
         }
     }
 
-    state.web_runtime.channel().unregister_session(&session_id);
+    state.web_runtime.channel().unregister_session(&registration);
     drop(local_tx);
     writer.abort();
 }
