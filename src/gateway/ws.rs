@@ -212,7 +212,10 @@ async fn handle_socket(socket: WebSocket, state: AppState, session_id: Option<St
         }
     }
 
-    state.web_runtime.channel().unregister_session(&registration);
+    state
+        .web_runtime
+        .channel()
+        .unregister_session(&registration);
     drop(local_tx);
     writer.abort();
 }
