@@ -1829,8 +1829,24 @@ fn build_runtime_context(
         non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
         tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
         model_routes: Arc::new(config.model_routes.clone()),
+        query_classification: config.query_classification.clone(),
         ack_reactions: config.channels_config.ack_reactions,
         show_tool_calls: config.channels_config.show_tool_calls,
+        session_store: if config.channels_config.session_persistence {
+            match session_store::SessionStore::new(&config.workspace_dir) {
+                Ok(store) => {
+                    tracing::info!("📂 Session persistence enabled");
+                    Some(Arc::new(store))
+                }
+                Err(e) => {
+                    tracing::warn!("Session persistence disabled: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        },
+        approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
     })
 }
 
@@ -4037,64 +4053,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
         system_prompt,
         model.clone(),
         temperature,
-<<<<<<< HEAD
-        auto_save_memory: config.memory.auto_save,
-        max_tool_iterations: config.agent.max_tool_iterations,
-        min_relevance_score: config.memory.min_relevance_score,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
-        route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_key: config.api_key.clone(),
-        api_url: config.api_url.clone(),
-        reliability: Arc::new(config.reliability.clone()),
-        provider_runtime_options,
-        workspace_dir: Arc::new(config.workspace_dir.clone()),
-        message_timeout_secs,
-        interrupt_on_new_message: InterruptOnNewMessageConfig {
-            telegram: interrupt_on_new_message,
-            slack: interrupt_on_new_message_slack,
-        },
-        multimodal: config.multimodal.clone(),
-        hooks: if config.hooks.enabled {
-            let mut runner = crate::hooks::HookRunner::new();
-            if config.hooks.builtin.command_logger {
-                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
-            }
-            if config.hooks.builtin.webhook_audit.enabled {
-                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
-                    config.hooks.builtin.webhook_audit.clone(),
-                )));
-            }
-            Some(Arc::new(runner))
-        } else {
-            None
-        },
-        non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
-        tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
-        model_routes: Arc::new(config.model_routes.clone()),
-        query_classification: config.query_classification.clone(),
-        ack_reactions: config.channels_config.ack_reactions,
-        show_tool_calls: config.channels_config.show_tool_calls,
-        session_store: if config.channels_config.session_persistence {
-            match session_store::SessionStore::new(&config.workspace_dir) {
-                Ok(store) => {
-                    tracing::info!("📂 Session persistence enabled");
-                    Some(Arc::new(store))
-                }
-                Err(e) => {
-                    tracing::warn!("Session persistence disabled: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        },
-        approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
-    });
-=======
         channels_by_name,
     );
->>>>>>> e012a6a9 (feat(web): route dashboard chat through channel runtime)
 
     // Hydrate in-memory conversation histories from persisted JSONL session files.
     if let Some(ref store) = runtime_ctx.session_store {
