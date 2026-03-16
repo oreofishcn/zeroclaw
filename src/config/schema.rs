@@ -123,7 +123,6 @@ pub struct Config {
     /// Security subsystem configuration (`[security]`).
     #[serde(default)]
     pub security: SecurityConfig,
-
     /// Backup tool configuration (`[backup]`).
     #[serde(default)]
     pub backup: BackupConfig,
@@ -144,7 +143,6 @@ pub struct Config {
     /// deserialize correctly thanks to `#[serde(default)]`.
     #[serde(default, skip_serializing_if = "ConversationalAiConfig::is_disabled")]
     pub conversational_ai: ConversationalAiConfig,
-
     /// Managed cybersecurity service configuration (`[security_ops]`).
     #[serde(default)]
     pub security_ops: SecurityOpsConfig,
