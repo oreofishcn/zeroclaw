@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
-use uuid::Uuid;
 #[cfg(test)]
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebChannelEvent {
@@ -324,7 +324,10 @@ mod tests {
             .await
             .expect("newer registration should stay active");
 
-        let event = new_rx.recv().await.expect("new registration should receive event");
+        let event = new_rx
+            .recv()
+            .await
+            .expect("new registration should receive event");
         assert_eq!(event.content.as_deref(), Some("hello"));
     }
 }
