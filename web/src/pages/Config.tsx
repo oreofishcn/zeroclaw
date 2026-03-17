@@ -18,7 +18,9 @@ export default function Config() {
 
   useEffect(() => {
     getConfig()
-      .then((data) => { setConfig(typeof data === 'string' ? data : JSON.stringify(data, null, 2)); })
+      .then((data) => {
+        setConfig(typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
@@ -47,7 +49,7 @@ export default function Config() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="h-8 w-8 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--pc-border)', borderTopColor: 'var(--pc-accent)' }} />
+        <div className="theme-spinner h-8 w-8 rounded-full animate-spin" />
       </div>
     );
   }
@@ -57,22 +59,27 @@ export default function Config() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Settings className="h-5 w-5" style={{ color: 'var(--pc-accent)' }} />
-          <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--pc-text-primary)' }}>{t('config.configuration_title')}</h2>
+          <Settings className="h-5 w-5 text-[#0080ff]" />
+          <h2 className="text-sm font-semibold text-theme-primary uppercase tracking-wider">{t('config.configuration_title')}</h2>
         </div>
-        <button onClick={handleSave} disabled={saving} className="btn-electric flex items-center gap-2 text-sm px-4 py-2">
-          <Save className="h-4 w-4" />{saving ? t('config.saving') : t('config.save')}
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="btn-electric flex items-center gap-2 text-sm px-4 py-2"
+        >
+          <Save className="h-4 w-4" />
+          {saving ? t('config.saving') : t('config.save')}
         </button>
       </div>
 
       {/* Sensitive fields note */}
-      <div className="flex items-start gap-3 rounded-2xl p-4 border" style={{ borderColor: 'rgba(255, 170, 0, 0.2)', background: 'rgba(255, 170, 0, 0.05)' }}>
-        <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-status-warning)' }} />
+      <div className="flex items-start gap-3 rounded-xl p-4" style={{ border: '1px solid color-mix(in srgb, var(--color-status-warning) 18%, transparent)', background: 'color-mix(in srgb, var(--color-status-warning) 6%, transparent)' }}>
+        <ShieldAlert className="h-5 w-5 text-[var(--color-status-warning)] flex-shrink-0 mt-0.5" />
         <div>
-          <p className="text-sm font-medium" style={{ color: 'var(--color-status-warning)' }}>
+          <p className="text-sm text-[var(--color-status-warning)] font-medium">
             {t('config.sensitive_title')}
           </p>
-          <p className="text-sm mt-0.5" style={{ color: 'rgba(255, 170, 0, 0.7)' }}>
+          <p className="text-sm text-theme-muted mt-0.5">
             {t('config.sensitive_hint')}
           </p>
         </div>
@@ -80,27 +87,27 @@ export default function Config() {
 
       {/* Success message */}
       {success && (
-        <div className="flex items-center gap-2 rounded-xl p-3 border animate-fade-in" style={{ borderColor: 'rgba(0, 230, 138, 0.2)', background: 'rgba(0, 230, 138, 0.06)' }}>
-          <CheckCircle className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-status-success)' }} />
-          <span className="text-sm" style={{ color: 'var(--color-status-success)' }}>{success}</span>
+        <div className="flex items-center gap-2 rounded-xl p-3 animate-fade-in" style={{ border: '1px solid color-mix(in srgb, var(--color-status-success) 20%, transparent)', background: 'color-mix(in srgb, var(--color-status-success) 7%, transparent)' }}>
+          <CheckCircle className="h-4 w-4 text-[var(--color-status-success)] flex-shrink-0" />
+          <span className="text-sm text-[var(--color-status-success)]">{success}</span>
         </div>
       )}
 
       {/* Error message */}
       {error && (
-        <div className="flex items-center gap-2 rounded-xl p-3 border animate-fade-in" style={{ borderColor: 'rgba(239, 68, 68, 0.2)', background: 'rgba(239, 68, 68, 0.06)' }}>
-          <AlertTriangle className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--color-status-error)' }} />
-          <span className="text-sm" style={{ color: 'var(--color-status-error)' }}>{error}</span>
+        <div className="flex items-center gap-2 rounded-xl p-3 animate-fade-in" style={{ border: '1px solid color-mix(in srgb, var(--color-status-error) 22%, transparent)', background: 'color-mix(in srgb, var(--color-status-error) 7%, transparent)' }}>
+          <AlertTriangle className="h-4 w-4 text-[var(--color-status-error)] flex-shrink-0" />
+          <span className="text-sm text-[var(--color-status-error-soft)]">{error}</span>
         </div>
       )}
 
       {/* Config Editor */}
-      <div className="card overflow-hidden rounded-2xl">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-accent-glow)' }}>
-          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--pc-text-muted)' }}>
+      <div className="glass-card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--color-border-default)]" style={{ background: 'var(--color-accent-blue-soft)' }}>
+          <span className="text-[10px] text-theme-faint font-semibold uppercase tracking-wider">
             {t('config.toml_label')}
           </span>
-          <span className="text-[10px]" style={{ color: 'var(--pc-text-faint)' }}>
+          <span className="text-[10px] text-theme-faint">
             {config.split('\n').length} {t('config.lines')}
           </span>
         </div>
@@ -108,8 +115,8 @@ export default function Config() {
           value={config}
           onChange={(e) => setConfig(e.target.value)}
           spellCheck={false}
-          className="w-full min-h-[500px] text-sm p-4 resize-y focus:outline-none font-mono"
-          style={{ background: 'var(--pc-bg-base)', color: 'var(--pc-text-secondary)', tabSize: 4 }}
+          className="w-full min-h-[500px] text-theme-secondary font-mono text-sm p-4 resize-y focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-blue)]/30 focus:ring-inset"
+          style={{ background: 'var(--color-bg-input)', tabSize: 4 }}
         />
       </div>
     </div>

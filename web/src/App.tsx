@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useState, useEffect, createContext, useContext, Component, type ReactNode, type ErrorInfo } from 'react';
-import { ThemeProvider } from './contexts/ThemeContext';
+import { useState, useEffect, createContext, useContext, Component } from 'react';
+import type { ReactNode, ErrorInfo } from 'react';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import AgentChat from './pages/AgentChat';
@@ -18,11 +18,20 @@ import { DraftContext, useDraftStore } from './hooks/useDraft';
 import { setLocale, type Locale } from './lib/i18n';
 import { basePath } from './lib/basePath';
 import { getAdminPairCode } from './lib/api';
+import { THEME_STORAGE_KEY, normalizeTheme, resolveInitialTheme } from './lib/theme.js';
 
 // Locale context
 interface LocaleContextType {
   locale: string;
   setAppLocale: (locale: string) => void;
+}
+
+type Theme = 'light' | 'dark';
+
+interface ThemeContextType {
+  theme: Theme;
+  setAppTheme: (theme: Theme) => void;
+  toggleAppTheme: () => void;
 }
 
 export const LocaleContext = createContext<LocaleContextType>({
@@ -31,11 +40,15 @@ export const LocaleContext = createContext<LocaleContextType>({
 });
 
 export const useLocaleContext = () => useContext(LocaleContext);
+export const ThemeContext = createContext<ThemeContextType>({
+  theme: 'dark',
+  setAppTheme: () => {},
+  toggleAppTheme: () => {},
+});
 
-// ---------------------------------------------------------------------------
-// Error boundary — catches render crashes and shows a recoverable message
-// instead of a black screen
-// ---------------------------------------------------------------------------
+export const useThemeContext = () => useContext(ThemeContext);
+
+// Error boundary keeps the navigation shell alive if a page crashes.
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -62,19 +75,19 @@ export class ErrorBoundary extends Component<
     if (this.state.error) {
       return (
         <div className="p-6">
-          <div className="card p-6 w-full max-w-lg" style={{ borderColor: 'rgba(239, 68, 68, 0.3)' }}>
-            <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-status-error)' }}>
+          <div className="bg-gray-900 border border-red-700 rounded-xl p-6 w-full max-w-lg">
+            <h2 className="text-lg font-semibold text-red-400 mb-2">
               Something went wrong
             </h2>
-            <p className="text-sm mb-4" style={{ color: 'var(--pc-text-muted)' }}>
+            <p className="text-gray-400 text-sm mb-4">
               A render error occurred. Check the browser console for details.
             </p>
-            <pre className="text-xs rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all font-mono" style={{ background: 'var(--pc-bg-base)', color: 'var(--color-status-error)' }}>
+            <pre className="text-xs text-red-300 bg-gray-800 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
               {this.state.error.message}
             </pre>
             <button
               onClick={() => this.setState({ error: null })}
-              className="btn-electric mt-6 px-4 py-2 text-sm font-medium"
+              className="mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
             >
               Try again
             </button>
@@ -126,30 +139,42 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--pc-bg-base)' }}>
+    <div className="theme-splash min-h-screen flex items-center justify-center">
       {/* Ambient glow */}
-      <div className="relative surface-panel p-8 w-full max-w-md animate-fade-in-scale">
+      <div
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full opacity-20 pointer-events-none"
+        style={{ background: 'radial-gradient(circle, var(--color-accent-blue) 0%, transparent 70%)' }}
+      />
+
+      <div className="relative glass-card p-8 w-full max-w-md animate-fade-in-scale">
+        {/* Top glow accent */}
+        <div className="absolute -top-px left-1/4 right-1/4 h-px" style={{ background: 'linear-gradient(90deg, transparent, #0080ff, transparent)' }} />
 
         <div className="text-center mb-8">
           <img
             src={`${basePath}/_app/zeroclaw-trans.png`}
             alt="ZeroClaw"
             className="h-20 w-20 rounded-2xl object-cover mx-auto mb-4 animate-float"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            style={{ boxShadow: '0 0 30px rgba(0,128,255,0.3)' }}
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+            }}
           />
-          <h1 className="text-2xl font-bold mb-2 text-gradient-blue">ZeroClaw</h1>
-          <p className="text-sm" style={{ color: 'var(--pc-text-muted)' }}>
-            {displayCode ? 'Your pairing code' : 'Enter the pairing code from your terminal'}
-          </p>
+          <h1 className="text-2xl font-bold text-gradient-blue mb-2">ZeroClaw</h1>
+          {displayCode ? (
+            <p className="text-theme-muted text-sm">Your pairing code</p>
+          ) : (
+            <p className="text-theme-muted text-sm">Enter the pairing code from your terminal</p>
+          )}
         </div>
 
         {/* Show the pairing code if available (localhost) */}
         {!codeLoading && displayCode && (
-          <div className="mb-6 p-4 rounded-2xl text-center border" style={{ background: 'var(--pc-accent-glow)', borderColor: 'var(--pc-accent-dim)' }}>
-            <div className="text-4xl font-mono font-bold tracking-[0.4em] py-2" style={{ color: 'var(--pc-text-primary)' }}>
+          <div className="mb-6 p-4 rounded-xl text-center" style={{ background: 'rgba(0,128,255,0.08)', border: '1px solid rgba(0,128,255,0.2)' }}>
+            <div className="text-4xl font-mono font-bold tracking-[0.4em] text-theme-primary py-2">
               {displayCode}
             </div>
-            <p className="text-xs mt-2" style={{ color: 'var(--pc-text-muted)' }}>Enter this code below or on another device</p>
+            <p className="text-theme-muted text-xs mt-2">Enter this code below or on another device</p>
           </div>
         )}
 
@@ -164,7 +189,7 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
             autoFocus
           />
           {error && (
-            <p aria-live="polite" className="text-sm mb-4 text-center animate-fade-in" style={{ color: 'var(--color-status-error)' }}>{error}</p>
+            <p className="text-[#ff4466] text-sm mb-4 text-center animate-fade-in" aria-live="polite">{error}</p>
           )}
           <button
             type="submit"
@@ -187,11 +212,28 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
 function AppContent() {
   const { isAuthenticated, requiresPairing, loading, pair, logout } = useAuth();
   const [locale, setLocaleState] = useState('en');
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === 'undefined') {
+      return 'dark';
+    }
+    return resolveInitialTheme(
+      window.localStorage.getItem(THEME_STORAGE_KEY),
+      window.matchMedia('(prefers-color-scheme: light)').matches,
+    );
+  });
   const draftStore = useDraftStore();
 
   const setAppLocale = (newLocale: string) => {
     setLocaleState(newLocale);
     setLocale(newLocale as Locale);
+  };
+
+  const setAppTheme = (nextTheme: Theme) => {
+    setThemeState(nextTheme);
+  };
+
+  const toggleAppTheme = () => {
+    setThemeState((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'));
   };
 
   // Listen for 401 events to force logout
@@ -203,12 +245,33 @@ function AppContent() {
     return () => window.removeEventListener('zeroclaw-unauthorized', handler);
   }, [logout]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+
+    const handlePreferenceChange = (event: MediaQueryListEvent) => {
+      const storedTheme = normalizeTheme(window.localStorage.getItem(THEME_STORAGE_KEY));
+      if (storedTheme !== null) {
+        return;
+      }
+      setThemeState(event.matches ? 'light' : 'dark');
+    };
+
+    mediaQuery.addEventListener('change', handlePreferenceChange);
+    return () => mediaQuery.removeEventListener('change', handlePreferenceChange);
+  }, []);
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--pc-bg-base)' }}>
+      <div className="theme-splash min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 animate-fade-in">
-          <div className="h-10 w-10 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--pc-border)', borderTopColor: 'var(--pc-accent)' }} />
-          <p className="text-sm" style={{ color: 'var(--pc-text-muted)' }}>Connecting...</p>
+          <div className="theme-spinner h-10 w-10 rounded-full animate-spin" />
+          <p className="text-theme-muted text-sm">Connecting...</p>
         </div>
       </div>
     );
@@ -221,22 +284,24 @@ function AppContent() {
   return (
     <DraftContext.Provider value={draftStore}>
       <LocaleContext.Provider value={{ locale, setAppLocale }}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/agent" element={<AgentChat />} />
-            <Route path="/tools" element={<Tools />} />
-            <Route path="/cron" element={<Cron />} />
-            <Route path="/integrations" element={<Integrations />} />
-            <Route path="/memory" element={<Memory />} />
-            <Route path="/config" element={<Config />} />
-            <Route path="/cost" element={<Cost />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/doctor" element={<Doctor />} />
-            <Route path="/pairing" element={<Pairing />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
+        <ThemeContext.Provider value={{ theme, setAppTheme, toggleAppTheme }}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/agent" element={<AgentChat />} />
+              <Route path="/tools" element={<Tools />} />
+              <Route path="/cron" element={<Cron />} />
+              <Route path="/integrations" element={<Integrations />} />
+              <Route path="/memory" element={<Memory />} />
+              <Route path="/config" element={<Config />} />
+              <Route path="/cost" element={<Cost />} />
+              <Route path="/logs" element={<Logs />} />
+              <Route path="/doctor" element={<Doctor />} />
+              <Route path="/pairing" element={<Pairing />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </ThemeContext.Provider>
       </LocaleContext.Provider>
     </DraftContext.Provider>
   );
@@ -245,9 +310,7 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <ThemeProvider>
-        <AppContent />
-      </ThemeProvider>
+      <AppContent />
     </AuthProvider>
   );
 }

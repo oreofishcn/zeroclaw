@@ -10,7 +10,6 @@ import {
   ChevronDown,
   ChevronRight,
   RefreshCw,
-  Pencil,
 } from 'lucide-react';
 import type { CronJob, CronRun } from '@/types/api';
 import {
@@ -20,7 +19,6 @@ import {
   getCronRuns,
   getCronSettings,
   patchCronSettings,
-  patchCronJob,
 } from '@/lib/api';
 import type { CronSettings } from '@/lib/api';
 import { t } from '@/lib/i18n';
@@ -53,12 +51,14 @@ function RunHistoryPanel({ jobId }: { jobId: string }) {
       .finally(() => setLoading(false));
   }, [jobId]);
 
-  useEffect(() => { fetchRuns(); }, [fetchRuns]);
+  useEffect(() => {
+    fetchRuns();
+  }, [fetchRuns]);
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 text-xs" style={{ color: 'var(--pc-text-muted)' }}>
-        <div className="h-4 w-4 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--pc-border)', borderTopColor: 'var(--pc-accent)' }} />
+      <div className="flex items-center gap-2 px-4 py-3 text-theme-muted text-xs">
+        <div className="theme-spinner animate-spin rounded-full h-4 w-4" />
         Loading run history...
       </div>
     );
@@ -68,12 +68,13 @@ function RunHistoryPanel({ jobId }: { jobId: string }) {
     return (
       <div className="px-4 py-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs" style={{ color: 'var(--color-status-error)' }}>
+          <span className="text-xs text-[var(--color-status-error-soft)]">
             {t('cron.load_run_history_error')}: {error}
           </span>
           <button
             onClick={fetchRuns}
-            className="btn-icon">
+            className="text-theme-muted hover:text-theme-primary transition-colors duration-300"
+          >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -84,10 +85,10 @@ function RunHistoryPanel({ jobId }: { jobId: string }) {
   if (runs.length === 0) {
     return (
       <div className="px-4 py-3 flex items-center justify-between">
-        <span className="text-xs" style={{ color: 'var(--pc-text-faint)' }}>{t('cron.no_runs')}</span>
+        <span className="text-xs text-theme-faint">{t('cron.no_runs')}</span>
         <button
           onClick={fetchRuns}
-          className="btn-icon"
+          className="text-theme-muted hover:text-theme-primary transition-colors duration-300"
         >
           <RefreshCw className="h-3.5 w-3.5" />
         </button>
@@ -98,12 +99,12 @@ function RunHistoryPanel({ jobId }: { jobId: string }) {
   return (
     <div className="px-4 py-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium" style={{ color: 'var(--pc-text-secondary)' }}>
+        <span className="text-xs font-medium text-theme-secondary">
           {t('cron.recent_runs')} ({runs.length})
         </span>
         <button
           onClick={fetchRuns}
-          className="btn-icon"
+          className="text-theme-muted hover:text-theme-primary transition-colors duration-300"
           title="Refresh runs"
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -113,26 +114,27 @@ function RunHistoryPanel({ jobId }: { jobId: string }) {
         {runs.map((run) => (
           <div
             key={run.id}
-            className="rounded-xl px-3 py-2 text-xs border" style={{ background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)' }}
+            className="rounded-lg px-3 py-2 text-xs border"
+            style={{ background: 'color-mix(in srgb, var(--color-accent-blue) 4%, var(--color-bg-card))', borderColor: 'color-mix(in srgb, var(--color-border-default) 75%, transparent)' }}
           >
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
                 {run.status === 'ok' ? (
-                  <CheckCircle className="h-3.5 w-3.5" style={{ color: 'var(--color-status-success)' }} />
+                  <CheckCircle className="h-3.5 w-3.5 text-[#00e68a]" />
                 ) : (
-                  <XCircle className="h-3.5 w-3.5" style={{ color: 'var(--color-status-error)' }} />
+                  <XCircle className="h-3.5 w-3.5 text-[#ff4466]" />
                 )}
-                <span style={{ color: 'var(--pc-text-secondary)' }}>{run.status}</span>
+                <span className="text-theme-secondary capitalize">{run.status}</span>
               </div>
-              <span style={{ color: 'var(--pc-text-muted)' }}>
+              <span className="text-theme-muted">
                 {formatDuration(run.duration_ms)}
               </span>
             </div>
-            <div className="flex items-center gap-3" style={{ color: 'var(--pc-text-muted)' }}>
+            <div className="flex items-center gap-3 text-theme-muted">
               <span>{formatDate(run.started_at)}</span>
             </div>
             {run.output && (
-              <pre className="mt-1.5 rounded-lg p-2 text-xs overflow-x-auto max-h-24 whitespace-pre-wrap break-words font-mono" style={{ background: 'var(--pc-bg-base)', color: 'var(--pc-text-secondary)' }}>
+              <pre className="mt-1.5 rounded p-2 text-theme-secondary text-xs overflow-x-auto max-h-24 whitespace-pre-wrap break-words" style={{ background: 'var(--color-bg-input)' }}>
                 {run.output}
               </pre>
             )}
@@ -147,47 +149,25 @@ export default function Cron() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
   const [settings, setSettings] = useState<CronSettings | null>(null);
   const [togglingCatchUp, setTogglingCatchUp] = useState(false);
 
-  // Unified modal: null = closed, 'add' = adding, CronJob = editing
-  const [modalJob, setModalJob] = useState<CronJob | 'add' | null>(null);
-
-  // Shared form state for both add and edit
+  // Form state
   const [formName, setFormName] = useState('');
   const [formSchedule, setFormSchedule] = useState('');
   const [formCommand, setFormCommand] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const isEditing = modalJob !== null && modalJob !== 'add';
-
-  const openAddModal = () => {
-    setFormName('');
-    setFormSchedule('');
-    setFormCommand('');
-    setFormError(null);
-    setModalJob('add');
-  };
-
-  const openEditModal = (job: CronJob) => {
-    setFormName(job.name ?? '');
-    setFormSchedule(job.expression);
-    setFormCommand(job.prompt ?? job.command);
-    setFormError(null);
-    setModalJob(job);
-  };
-
-  const closeModal = () => {
-    setModalJob(null);
-    setFormError(null);
-  };
-
   const fetchJobs = () => {
     setLoading(true);
-    getCronJobs().then(setJobs).catch((err) => setError(err.message)).finally(() => setLoading(false));
+    getCronJobs()
+      .then(setJobs)
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
   };
 
   const fetchSettings = () => {
@@ -214,7 +194,7 @@ export default function Cron() {
     fetchSettings();
   }, []);
 
-  const handleSubmit = async () => {
+  const handleAdd = async () => {
     if (!formSchedule.trim() || !formCommand.trim()) {
       setFormError(t('cron.validation_error'));
       return;
@@ -222,28 +202,18 @@ export default function Cron() {
     setSubmitting(true);
     setFormError(null);
     try {
-      if (isEditing) {
-        const updated = await patchCronJob((modalJob as CronJob).id, {
-          name: formName.trim() || undefined,
-          schedule: formSchedule.trim(),
-          command: formCommand.trim(),
-        });
-        setJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
-      } else {
-        const job = await addCronJob({
-          name: formName.trim() || undefined,
-          schedule: formSchedule.trim(),
-          command: formCommand.trim(),
-        });
-        setJobs((prev) => [...prev, job]);
-      }
-      closeModal();
+      const job = await addCronJob({
+        name: formName.trim() || undefined,
+        schedule: formSchedule.trim(),
+        command: formCommand.trim(),
+      });
+      setJobs((prev) => [...prev, job]);
+      setShowForm(false);
+      setFormName('');
+      setFormSchedule('');
+      setFormCommand('');
     } catch (err: unknown) {
-      setFormError(
-        err instanceof Error
-          ? err.message
-          : t(isEditing ? 'cron.edit_error' : 'cron.add_error'),
-      );
+      setFormError(err instanceof Error ? err.message : t('cron.add_error'));
     } finally {
       setSubmitting(false);
     }
@@ -264,20 +234,20 @@ export default function Cron() {
     if (!status) return null;
     switch (status.toLowerCase()) {
       case 'ok':
-        case 'success':
-          return <CheckCircle className="h-4 w-4" style={{ color: 'var(--color-status-success)' }} />;
+      case 'success':
+        return <CheckCircle className="h-4 w-4 text-[#00e68a]" />;
       case 'error':
-        case 'failed':
-          return <XCircle className="h-4 w-4" style={{ color: 'var(--color-status-error)' }} />;
+      case 'failed':
+        return <XCircle className="h-4 w-4 text-[#ff4466]" />;
       default:
-        return <AlertCircle className="h-4 w-4" style={{ color: 'var(--color-status-warning)' }} />;
+        return <AlertCircle className="h-4 w-4 text-[#ffaa00]" />;
     }
   };
 
   if (error) {
     return (
       <div className="p-6 animate-fade-in">
-        <div className="rounded-2xl border p-4" style={{ background: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
+        <div className="rounded-xl p-4 text-[var(--color-status-error-soft)]" style={{ background: 'color-mix(in srgb, var(--color-status-error) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-status-error) 22%, transparent)' }}>
           {t('cron.load_error')}: {error}
         </div>
       </div>
@@ -287,7 +257,7 @@ export default function Cron() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="h-8 w-8 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--pc-border)', borderTopColor: 'var(--pc-accent)' }} />
+        <div className="theme-spinner h-8 w-8 rounded-full animate-spin" />
       </div>
     );
   }
@@ -297,16 +267,17 @@ export default function Cron() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Clock className="h-5 w-5" style={{ color: 'var(--pc-accent)' }} />
-          <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--pc-text-primary)' }}>
+          <Clock className="h-5 w-5 text-[#0080ff]" />
+          <h2 className="text-sm font-semibold text-theme-primary uppercase tracking-wider">
             {t('cron.scheduled_tasks')} ({jobs.length})
           </h2>
         </div>
         <button
-          onClick={openAddModal}
+          onClick={() => setShowForm(true)}
           className="btn-electric flex items-center gap-2 text-sm px-4 py-2"
         >
-          <Plus className="h-4 w-4" />{t('cron.add_job')}
+          <Plus className="h-4 w-4" />
+          {t('cron.add_job')}
         </button>
       </div>
 
@@ -314,10 +285,10 @@ export default function Cron() {
       {settings && (
         <div className="glass-card px-4 py-3 flex items-center justify-between">
           <div>
-            <span className="text-sm font-medium" style={{ color: 'var(--pc-text-primary)' }}>
+            <span className="text-sm font-medium text-white">
               Catch up missed jobs on startup
             </span>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--pc-text-muted)' }}>
+            <p className="text-xs text-[#556080] mt-0.5">
               Run all overdue jobs when ZeroClaw starts after downtime
             </p>
           </div>
@@ -341,67 +312,84 @@ export default function Cron() {
         </div>
       )}
 
-      {/* Unified Add / Edit Modal */}
-      {modalJob !== null && (
+      {/* Add Job Form Modal */}
+      {showForm && (
         <div className="fixed inset-0 modal-backdrop flex items-center justify-center z-50">
-          <div className="surface-panel p-6 w-full max-w-md mx-4 animate-fade-in-scale">
+          <div className="glass-card p-6 w-full max-w-md mx-4 animate-fade-in-scale">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold" style={{ color: 'var(--pc-text-primary)' }}>
-                {isEditing ? t('cron.edit_modal_title') : t('cron.add_modal_title')}
-              </h3>
+              <h3 className="text-lg font-semibold text-theme-primary">{t('cron.add_modal_title')}</h3>
               <button
-                onClick={closeModal}
-                className="btn-icon"
+                onClick={() => {
+                  setShowForm(false);
+                  setFormError(null);
+                }}
+                className="text-theme-muted hover:text-theme-primary transition-colors duration-300"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
+
             {formError && (
-              <div className="mb-4 rounded-xl border p-3 text-sm animate-fade-in" style={{ background: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171' }}>
+              <div className="mb-4 rounded-xl p-3 text-sm text-[var(--color-status-error-soft)] animate-fade-in" style={{ background: 'color-mix(in srgb, var(--color-status-error) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-status-error) 22%, transparent)' }}>
                 {formError}
               </div>
             )}
+
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style={{ color: 'var(--pc-text-secondary)' }}>
+                <label className="block text-xs font-semibold text-theme-secondary mb-1.5 uppercase tracking-wider">
                   {t('cron.name_optional')}
                 </label>
-                <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="e.g. Daily cleanup" className="input-electric w-full px-3 py-2.5 text-sm" />
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="e.g. Daily cleanup"
+                  className="input-electric w-full px-3 py-2.5 text-sm"
+                />
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style={{ color: 'var(--pc-text-secondary)' }}>
-                  {t('cron.schedule_required')} <span style={{ color: 'var(--color-status-error)' }}>*</span>
+                <label className="block text-xs font-semibold text-theme-secondary mb-1.5 uppercase tracking-wider">
+                  {t('cron.schedule_required')} <span className="text-[var(--color-status-error)]">*</span>
                 </label>
-                <input type="text" value={formSchedule} onChange={(e) => setFormSchedule(e.target.value)} placeholder="e.g. 0 0 * * * (cron expression)" className="input-electric w-full px-3 py-2.5 text-sm" />
+                <input
+                  type="text"
+                  value={formSchedule}
+                  onChange={(e) => setFormSchedule(e.target.value)}
+                  placeholder="e.g. 0 0 * * * (cron expression)"
+                  className="input-electric w-full px-3 py-2.5 text-sm"
+                />
               </div>
               <div>
-                <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style={{ color: 'var(--pc-text-secondary)' }}>
-                  {t('cron.command_required')} <span style={{ color: 'var(--color-status-error)' }}>*</span>
+                <label className="block text-xs font-semibold text-theme-secondary mb-1.5 uppercase tracking-wider">
+                  {t('cron.command_required')} <span className="text-[var(--color-status-error)]">*</span>
                 </label>
-                <textarea
+                <input
+                  type="text"
                   value={formCommand}
                   onChange={(e) => setFormCommand(e.target.value)}
                   placeholder="e.g. cleanup --older-than 7d"
-                  rows={4}
-                  className="input-electric w-full px-3 py-2.5 text-sm resize-y"
+                  className="input-electric w-full px-3 py-2.5 text-sm"
                 />
               </div>
             </div>
+
             <div className="flex justify-end gap-3 mt-6">
               <button
-                onClick={closeModal}
-                className="btn-secondary px-4 py-2 text-sm font-medium"
+                onClick={() => {
+                  setShowForm(false);
+                  setFormError(null);
+                }}
+                className="px-4 py-2 text-sm font-medium text-theme-secondary hover:text-theme-primary border border-[var(--color-border-default)] rounded-xl hover:bg-[var(--color-accent-blue-soft)] transition-all duration-300"
               >
                 {t('cron.cancel')}
               </button>
               <button
-                onClick={handleSubmit}
+                onClick={handleAdd}
                 disabled={submitting}
                 className="btn-electric px-4 py-2 text-sm font-medium"
               >
-                {submitting
-                  ? t(isEditing ? 'cron.saving' : 'cron.adding')
-                  : t(isEditing ? 'cron.save' : 'cron.add_job')}
+                {submitting ? t('cron.adding') : t('cron.add_job')}
               </button>
             </div>
           </div>
@@ -410,21 +398,21 @@ export default function Cron() {
 
       {/* Jobs Table */}
       {jobs.length === 0 ? (
-        <div className="card p-8 text-center">
-          <Clock className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--pc-text-faint)' }} />
-          <p style={{ color: 'var(--pc-text-muted)' }}>{t('cron.empty')}</p>
+        <div className="glass-card p-8 text-center">
+          <Clock className="h-10 w-10 text-[var(--color-border-strong)] mx-auto mb-3" />
+          <p className="text-theme-muted">{t('cron.empty')}</p>
         </div>
       ) : (
-        <div className="card overflow-x-auto rounded-2xl">
+        <div className="glass-card overflow-x-auto">
           <table className="table-electric">
             <thead>
               <tr>
-                <th>{t('cron.id')}</th>
-                <th>{t('cron.name')}</th>
-                <th>{t('cron.command')}</th>
-                <th>{t('cron.next_run')}</th>
-                <th>{t('cron.last_status')}</th>
-                <th>{t('cron.enabled')}</th>
+                <th className="text-left">{t('cron.id')}</th>
+                <th className="text-left">{t('cron.name')}</th>
+                <th className="text-left">{t('cron.command')}</th>
+                <th className="text-left">{t('cron.next_run')}</th>
+                <th className="text-left">{t('cron.last_status')}</th>
+                <th className="text-left">{t('cron.enabled')}</th>
                 <th className="text-right">{t('cron.actions')}</th>
               </tr>
             </thead>
@@ -432,14 +420,14 @@ export default function Cron() {
               {jobs.map((job) => (
                 <React.Fragment key={job.id}>
                   <tr>
-                    <td className="font-mono text-xs">
+                    <td className="px-4 py-3 text-theme-muted font-mono text-xs">
                       <button
                         onClick={() =>
                           setExpandedJob((prev) =>
                             prev === job.id ? null : job.id,
                           )
-                      }
-                        className="flex items-center gap-1 btn-icon"
+                        }
+                        className="flex items-center gap-1 text-theme-muted hover:text-theme-primary transition-colors duration-300"
                         title="Toggle run history"
                       >
                         {expandedJob === job.id ? (
@@ -450,72 +438,65 @@ export default function Cron() {
                         {job.id.slice(0, 8)}
                       </button>
                     </td>
-                    <td className="font-medium text-sm" style={{ color: 'var(--pc-text-primary)' }}>
+                    <td className="px-4 py-3 text-theme-primary font-medium text-sm">
                       {job.name ?? '-'}
                     </td>
-                    <td className="font-mono text-xs max-w-[200px] truncate" style={{ color: 'var(--pc-text-secondary)' }}>
-                      {job.prompt ?? job.command}
+                    <td className="px-4 py-3 text-theme-secondary font-mono text-xs max-w-[200px] truncate">
+                      {job.command}
                     </td>
-                    <td className="text-xs" style={{ color: 'var(--pc-text-muted)' }}>
+                    <td className="px-4 py-3 text-theme-muted text-xs">
                       {formatDate(job.next_run)}
                     </td>
-                    <td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         {statusIcon(job.last_status)}
-                        <span className="text-xs capitalize" style={{ color: 'var(--pc-text-secondary)' }}>
+                        <span className="text-theme-secondary text-xs capitalize">
                           {job.last_status ?? '-'}
                         </span>
                       </div>
                     </td>
-                    <td>
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold border"
-                        style={job.enabled ? { color: 'var(--color-status-success)', borderColor: 'rgba(0, 230, 138, 0.2)', background: 'rgba(0, 230, 138, 0.06)' } : { color: 'var(--pc-text-faint)', borderColor: 'var(--pc-border)', background: 'transparent' }}>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
+                          job.enabled
+                            ? 'text-[var(--color-status-success)] border-[color:color-mix(in_srgb,var(--color-status-success)_20%,transparent)]'
+                            : 'text-theme-faint border-[var(--color-border-default)]'
+                        }`}
+                        style={{ background: job.enabled ? 'color-mix(in srgb, var(--color-status-success) 8%, transparent)' : 'color-mix(in srgb, var(--color-border-default) 38%, transparent)' }}
+                      >
                         {job.enabled ? t('cron.enabled_status') : t('cron.disabled_status')}
                       </span>
                     </td>
-                    <td className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openEditModal(job)}
-                          className="btn-icon"
-                          title={t('cron.edit')}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        {confirmDelete === job.id ? (
-                          <div className="flex items-center justify-end gap-2 animate-fade-in">
-                            <span className="text-xs" style={{ color: 'var(--color-status-error)' }}>
-                              {t('cron.confirm_delete')}
-                            </span>
-                            <button
-                              onClick={() => handleDelete(job.id)}
-                              className="text-xs font-medium"
-                              style={{ color: 'var(--color-status-error)' }}
-                            >
-                              {t('cron.yes')}
-                            </button>
-                            <button
-                              onClick={() => setConfirmDelete(null)}
-                              className="text-xs font-medium"
-                              style={{ color: 'var(--pc-text-muted)' }}
-                            >
-                              {t('cron.no')}
-                            </button>
-                          </div>
-                        ) : (
+                    <td className="px-4 py-3 text-right">
+                      {confirmDelete === job.id ? (
+                        <div className="flex items-center justify-end gap-2 animate-fade-in">
+                          <span className="text-xs text-[var(--color-status-error)]">{t('cron.confirm_delete')}</span>
                           <button
-                            onClick={() => setConfirmDelete(job.id)}
-                            className="btn-icon"
+                            onClick={() => handleDelete(job.id)}
+                            className="text-[var(--color-status-error)] hover:text-[var(--color-status-error-soft)] text-xs font-medium"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            {t('cron.yes')}
                           </button>
-                        )}
-                      </div>
+                          <button
+                            onClick={() => setConfirmDelete(null)}
+                            className="text-theme-muted hover:text-theme-primary text-xs font-medium"
+                          >
+                            {t('cron.no')}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDelete(job.id)}
+                          className="text-theme-faint hover:text-[var(--color-status-error)] transition-all duration-300"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                   {expandedJob === job.id && (
-                    <tr>
-                      <td colSpan={7} style={{ background: 'var(--pc-bg-elevated)' }}>
+                    <tr style={{ background: 'color-mix(in srgb, var(--color-accent-blue) 6%, var(--color-bg-secondary))' }}>
+                      <td colSpan={7}>
                         <RunHistoryPanel jobId={job.id} />
                       </td>
                     </tr>
