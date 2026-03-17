@@ -69,6 +69,20 @@ export default function AgentChat() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const pendingContentRef = useRef('');
 
+  const updateMessages = useCallback(
+    (
+      updater:
+        | ChatMessage[]
+        | ((prev: ChatMessage[]) => ChatMessage[]),
+    ) => {
+      setMessages((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        return capMessages(next);
+      });
+    },
+    [],
+  );
+
   // Persist draft to in-memory store so it survives route changes
   useEffect(() => {
     saveDraft(input);
@@ -101,17 +115,15 @@ export default function AgentChat() {
         case 'done': {
           const content = msg.full_response ?? msg.content ?? pendingContentRef.current;
           if (content) {
-            setMessages((prev) =>
-              capMessages([
-                ...prev,
-                {
-                  id: generateUUID(),
-                  role: 'agent',
-                  content,
-                  timestamp: new Date(),
-                },
-              ]),
-            );
+            updateMessages((prev) => [
+              ...prev,
+              {
+                id: generateUUID(),
+                role: 'agent',
+                content,
+                timestamp: new Date(),
+              },
+            ]);
           }
           pendingContentRef.current = '';
           setTyping(false);
@@ -119,45 +131,39 @@ export default function AgentChat() {
         }
 
         case 'tool_call':
-          setMessages((prev) =>
-            capMessages([
-              ...prev,
-              {
-                id: generateUUID(),
-                role: 'agent',
-                content: `[Tool Call] ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
-                timestamp: new Date(),
-              },
-            ]),
-          );
+          updateMessages((prev) => [
+            ...prev,
+            {
+              id: generateUUID(),
+              role: 'agent',
+              content: `[Tool Call] ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
+              timestamp: new Date(),
+            },
+          ]);
           break;
 
         case 'tool_result':
-          setMessages((prev) =>
-            capMessages([
-              ...prev,
-              {
-                id: generateUUID(),
-                role: 'agent',
-                content: `[Tool Result] ${msg.output ?? ''}`,
-                timestamp: new Date(),
-              },
-            ]),
-          );
+          updateMessages((prev) => [
+            ...prev,
+            {
+              id: generateUUID(),
+              role: 'agent',
+              content: `[Tool Result] ${msg.output ?? ''}`,
+              timestamp: new Date(),
+            },
+          ]);
           break;
 
         case 'error':
-          setMessages((prev) =>
-            capMessages([
-              ...prev,
-              {
-                id: generateUUID(),
-                role: 'agent',
-                content: `[Error] ${msg.message ?? 'Unknown error'}`,
-                timestamp: new Date(),
-              },
-            ]),
-          );
+          updateMessages((prev) => [
+            ...prev,
+            {
+              id: generateUUID(),
+              role: 'agent',
+              content: `[Error] ${msg.message ?? 'Unknown error'}`,
+              timestamp: new Date(),
+            },
+          ]);
           setTyping(false);
           pendingContentRef.current = '';
           break;
@@ -170,7 +176,7 @@ export default function AgentChat() {
     return () => {
       ws.disconnect();
     };
-  }, []);
+  }, [updateMessages]);
 
   useEffect(() => {
     persistMessages(messages);
@@ -184,17 +190,15 @@ export default function AgentChat() {
     const trimmed = input.trim();
     if (!trimmed || !wsRef.current?.connected) return;
 
-    setMessages((prev) =>
-      capMessages([
-        ...prev,
-        {
-          id: generateUUID(),
-          role: 'user',
-          content: trimmed,
-          timestamp: new Date(),
-        },
-      ]),
-    );
+    updateMessages((prev) => [
+      ...prev,
+      {
+        id: generateUUID(),
+        role: 'user',
+        content: trimmed,
+        timestamp: new Date(),
+      },
+    ]);
 
     try {
       wsRef.current.sendMessage(trimmed);
