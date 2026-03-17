@@ -1844,6 +1844,7 @@ fn build_runtime_context(
     model: String,
     temperature: f64,
     channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
+    activated_tools: Option<std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
 ) -> Arc<ChannelRuntimeContext> {
     let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
     provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
@@ -1932,6 +1933,7 @@ fn build_runtime_context(
             None
         },
         approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
+        activated_tools,
     })
 }
 
@@ -1962,6 +1964,7 @@ pub fn start_web_runtime(
         model,
         temperature,
         channels_by_name,
+        None,
     );
     hydrate_persisted_session_histories(&runtime_ctx);
     let max_in_flight_messages = compute_max_in_flight_messages(1);
@@ -4271,6 +4274,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         model.clone(),
         temperature,
         channels_by_name,
+        ch_activated_handle,
     );
 
     hydrate_persisted_session_histories(&runtime_ctx);
@@ -4380,6 +4384,7 @@ mod tests {
             "test-model".to_string(),
             0.0,
             channels_by_name,
+            None,
         );
 
         hydrate_persisted_session_histories(&runtime_ctx);
