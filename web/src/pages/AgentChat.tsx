@@ -4,6 +4,7 @@ import type { WsMessage } from '@/types/api';
 import { WebSocketClient, getOrCreateSessionId } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
 import { useDraft } from '@/hooks/useDraft';
+import { t } from '@/lib/i18n';
 
 interface ChatMessage {
   id: string;
@@ -101,7 +102,7 @@ export default function AgentChat() {
     };
 
     ws.onError = () => {
-      setError('Connection error. Attempting to reconnect...');
+      setError(t('agent.connection_error'));
     };
 
     ws.onMessage = (msg: WsMessage) => {
@@ -136,7 +137,7 @@ export default function AgentChat() {
             {
               id: generateUUID(),
               role: 'agent',
-              content: `[Tool Call] ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
+              content: `${t('agent.tool_call_prefix')} ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
               timestamp: new Date(),
             },
           ]);
@@ -148,7 +149,7 @@ export default function AgentChat() {
             {
               id: generateUUID(),
               role: 'agent',
-              content: `[Tool Result] ${msg.output ?? ''}`,
+              content: `${t('agent.tool_result_prefix')} ${msg.output ?? ''}`,
               timestamp: new Date(),
             },
           ]);
@@ -160,7 +161,7 @@ export default function AgentChat() {
             {
               id: generateUUID(),
               role: 'agent',
-              content: `[Error] ${msg.message ?? 'Unknown error'}`,
+              content: `${t('agent.error_prefix')} ${msg.message ?? t('agent.unknown_error')}`,
               timestamp: new Date(),
             },
           ]);
@@ -205,7 +206,7 @@ export default function AgentChat() {
       setTyping(true);
       pendingContentRef.current = '';
     } catch {
-      setError('Failed to send message. Please try again.');
+      setError(t('agent.send_error'));
     }
 
     setInput('');
@@ -254,7 +255,7 @@ export default function AgentChat() {
               <Bot className="h-8 w-8 text-[#0080ff]" />
             </div>
             <p className="text-lg font-semibold text-white mb-1">ZeroClaw Agent</p>
-            <p className="text-sm text-[#556080]">Send a message to start the conversation</p>
+            <p className="text-sm text-[#556080]">{t('agent.start_conversation')}</p>
           </div>
         )}
 
@@ -308,7 +309,7 @@ export default function AgentChat() {
               </div>
               <button
                 onClick={() => handleCopy(msg.id, msg.content)}
-                aria-label="Copy message"
+                aria-label={t('agent.copy_message')}
                 className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-all duration-300 p-1.5 rounded-lg bg-[#0a0a18] border border-[#1a1a3e] text-[#556080] hover:text-white hover:border-[#0080ff40]"
               >
                 {copiedId === msg.id ? (
@@ -349,7 +350,7 @@ export default function AgentChat() {
               value={input}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder={connected ? 'Type a message...' : 'Connecting...'}
+              placeholder={connected ? t('agent.type_message') : t('agent.connecting')}
               disabled={!connected}
               className="input-electric w-full px-4 py-3 text-sm resize-none overflow-y-auto disabled:opacity-40"
               style={{ minHeight: '44px', maxHeight: '200px' }}
@@ -370,7 +371,7 @@ export default function AgentChat() {
             }`}
           />
           <span className="text-[10px] text-[#334060]">
-            {connected ? 'Connected' : 'Disconnected'}
+            {connected ? t('agent.connected_status') : t('agent.disconnected_status')}
           </span>
         </div>
       </div>
