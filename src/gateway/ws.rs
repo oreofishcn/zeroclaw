@@ -276,6 +276,7 @@ fn web_channel_message(session_id: String, content: String) -> ChannelMessage {
         channel: "web".to_string(),
         timestamp: unix_timestamp_secs(),
         thread_ts: None,
+        interruption_scope_id: None,
     }
 }
 
