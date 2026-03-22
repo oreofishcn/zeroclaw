@@ -10,6 +10,8 @@
 //! ```
 
 use super::AppState;
+use crate::channels::traits::ChannelMessage;
+use crate::channels::web::WebChannelEvent;
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -20,28 +22,8 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use tracing::debug;
-
-/// Optional connection parameters sent as the first WebSocket message.
-///
-/// If the first message after upgrade is `{"type":"connect",...}`, these
-/// parameters are extracted and an acknowledgement is sent back. Old clients
-/// that send `{"type":"message",...}` as the first frame still work — the
-/// message is processed normally (backward-compatible).
-#[derive(Debug, Deserialize)]
-struct ConnectParams {
-    #[serde(rename = "type")]
-    msg_type: String,
-    /// Client-chosen session ID for memory persistence
-    #[serde(default)]
-    session_id: Option<String>,
-    /// Device name for device registry tracking
-    #[serde(default)]
-    device_name: Option<String>,
-    /// Client capabilities
-    #[serde(default)]
-    capabilities: Vec<String>,
-}
+use tokio::sync::mpsc::unbounded_channel;
+use uuid::Uuid;
 
 /// The sub-protocol we support for the chat WebSocket.
 const WS_PROTOCOL: &str = "zeroclaw.v1";
@@ -53,6 +35,14 @@ const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
 pub struct WsQuery {
     pub token: Option<String>,
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WsInboundAction {
+    Message(String),
+    Cancel,
+    Ignore,
+    Error(&'static str),
 }
 
 /// Extract a bearer token from WebSocket-compatible sources.
@@ -133,115 +123,48 @@ pub async fn handle_ws_chat(
         ws
     };
 
-    let session_id = params.session_id;
+    let session_id = params.session_id.clone();
     ws.on_upgrade(move |socket| handle_socket(socket, state, session_id))
         .into_response()
 }
 
-/// Gateway session key prefix to avoid collisions with channel sessions.
-const GW_SESSION_PREFIX: &str = "gw_";
-
 async fn handle_socket(socket: WebSocket, state: AppState, session_id: Option<String>) {
+    let session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let (mut sender, mut receiver) = socket.split();
+    let (local_tx, mut local_rx) = unbounded_channel::<String>();
+    let (session_tx, mut session_rx) = unbounded_channel::<WebChannelEvent>();
+    let registration = state
+        .web_runtime
+        .channel()
+        .register_session(session_id.clone(), session_tx);
 
-    // Resolve session ID: use provided or generate a new UUID
-    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
-
-    // Build a persistent Agent for this connection so history is maintained across turns.
-    let config = state.config.lock().clone();
-    let mut agent = match crate::agent::Agent::from_config(&config).await {
-        Ok(a) => a,
-        Err(e) => {
-            let err = serde_json::json!({"type": "error", "message": format!("Failed to initialise agent: {e}")});
-            let _ = sender.send(Message::Text(err.to_string().into())).await;
-            return;
+    let writer = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                maybe_local = local_rx.recv() => {
+                    let Some(payload) = maybe_local else { break; };
+                    if sender.send(Message::Text(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+                maybe_event = session_rx.recv() => {
+                    let Some(event) = maybe_event else { break; };
+                    let payload = web_event_payload(&event);
+                    if sender.send(Message::Text(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+            }
         }
-    };
-    agent.set_memory_session_id(Some(session_id.clone()));
-
-    // Hydrate agent from persisted session (if available)
-    let mut resumed = false;
-    let mut message_count: usize = 0;
-    if let Some(ref backend) = state.session_backend {
-        let messages = backend.load(&session_key);
-        if !messages.is_empty() {
-            message_count = messages.len();
-            agent.seed_history(&messages);
-            resumed = true;
-        }
-    }
-
-    // Send session_start message to client
-    let session_start = serde_json::json!({
-        "type": "session_start",
-        "session_id": session_id,
-        "resumed": resumed,
-        "message_count": message_count,
     });
-    let _ = sender
-        .send(Message::Text(session_start.to_string().into()))
-        .await;
 
-    // ── Optional connect handshake ──────────────────────────────────
-    // The first message may be a `{"type":"connect",...}` frame carrying
-    // connection parameters.  If it is, we extract the params, send an
-    // ack, and proceed to the normal message loop.  If the first message
-    // is a regular `{"type":"message",...}` frame, we fall through and
-    // process it immediately (backward-compatible).
-    let mut first_msg_fallback: Option<String> = None;
-
-    if let Some(first) = receiver.next().await {
-        match first {
-            Ok(Message::Text(text)) => {
-                if let Ok(cp) = serde_json::from_str::<ConnectParams>(&text) {
-                    if cp.msg_type == "connect" {
-                        debug!(
-                            session_id = ?cp.session_id,
-                            device_name = ?cp.device_name,
-                            capabilities = ?cp.capabilities,
-                            "WebSocket connect params received"
-                        );
-                        // Override session_id if provided in connect params
-                        if let Some(sid) = &cp.session_id {
-                            agent.set_memory_session_id(Some(sid.clone()));
-                        }
-                        let ack = serde_json::json!({
-                            "type": "connected",
-                            "message": "Connection established"
-                        });
-                        let _ = sender.send(Message::Text(ack.to_string().into())).await;
-                    } else {
-                        // Not a connect message — fall through to normal processing
-                        first_msg_fallback = Some(text.to_string());
-                    }
-                } else {
-                    // Not parseable as ConnectParams — fall through
-                    first_msg_fallback = Some(text.to_string());
-                }
-            }
-            Ok(Message::Close(_)) | Err(_) => return,
-            _ => {}
-        }
-    }
-
-    // Process the first message if it was not a connect frame
-    if let Some(ref text) = first_msg_fallback {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
-            if parsed["type"].as_str() == Some("message") {
-                let content = parsed["content"].as_str().unwrap_or("").to_string();
-                if !content.is_empty() {
-                    // Persist user message
-                    if let Some(ref backend) = state.session_backend {
-                        let user_msg = crate::providers::ChatMessage::user(&content);
-                        let _ = backend.append(&session_key, &user_msg);
-                    }
-                    process_chat_message(&state, &mut agent, &mut sender, &content, &session_key)
-                        .await;
-                }
-            }
-        }
-    }
+    let _ = local_tx.send(
+        serde_json::json!({
+            "type": "session_ready",
+            "session_id": session_id,
+        })
+        .to_string(),
+    );
 
     while let Some(msg) = receiver.next().await {
         let msg = match msg {
@@ -250,95 +173,130 @@ async fn handle_socket(socket: WebSocket, state: AppState, session_id: Option<St
             _ => continue,
         };
 
-        // Parse incoming message
-        let parsed: serde_json::Value = match serde_json::from_str(&msg) {
-            Ok(v) => v,
-            Err(_) => {
-                let err = serde_json::json!({"type": "error", "message": "Invalid JSON"});
-                let _ = sender.send(Message::Text(err.to_string().into())).await;
-                continue;
+        match parse_ws_inbound_action(&msg) {
+            WsInboundAction::Message(content) => {
+                let channel_message = web_channel_message(session_id.clone(), content);
+                if let Err(e) = state.web_runtime.send(channel_message).await {
+                    let sanitized = crate::providers::sanitize_api_error(&e.to_string());
+                    let err = serde_json::json!({
+                        "type": "error",
+                        "message": sanitized,
+                    });
+                    let _ = local_tx.send(err.to_string());
+                }
             }
-        };
-
-        let msg_type = parsed["type"].as_str().unwrap_or("");
-        if msg_type != "message" {
-            continue;
+            WsInboundAction::Cancel => {
+                let cancel_message = web_channel_message(session_id.clone(), "/cancel".to_string());
+                if let Err(e) = state.web_runtime.send(cancel_message).await {
+                    let sanitized = crate::providers::sanitize_api_error(&e.to_string());
+                    let err = serde_json::json!({
+                        "type": "error",
+                        "message": sanitized,
+                    });
+                    let _ = local_tx.send(err.to_string());
+                } else {
+                    let _ = local_tx.send(
+                        serde_json::json!({
+                            "type": "message_cancelled",
+                            "session_id": session_id,
+                        })
+                        .to_string(),
+                    );
+                }
+            }
+            WsInboundAction::Ignore => {}
+            WsInboundAction::Error(message) => {
+                let err = serde_json::json!({"type": "error", "message": message});
+                let _ = local_tx.send(err.to_string());
+            }
         }
+    }
 
-        let content = parsed["content"].as_str().unwrap_or("").to_string();
-        if content.is_empty() {
-            continue;
-        }
+    state
+        .web_runtime
+        .channel()
+        .unregister_session(&registration);
+    drop(local_tx);
+    writer.abort();
+}
 
-        // Persist user message
-        if let Some(ref backend) = state.session_backend {
-            let user_msg = crate::providers::ChatMessage::user(&content);
-            let _ = backend.append(&session_key, &user_msg);
-        }
+fn web_event_payload(event: &WebChannelEvent) -> String {
+    match event.event_type.as_str() {
+        "message_final" => serde_json::json!({
+            "type": "done",
+            "full_response": event.content.clone().unwrap_or_default(),
+            "message_id": event.message_id,
+        }),
+        "draft_start" => serde_json::json!({
+            "type": "draft_start",
+            "message_id": event.message_id,
+            "content": event.content,
+            "session_id": event.session_id,
+        }),
+        "draft_update" => serde_json::json!({
+            "type": "chunk",
+            "message_id": event.message_id,
+            "content": event.content,
+            "session_id": event.session_id,
+        }),
+        "draft_cancelled" => serde_json::json!({
+            "type": "message_cancelled",
+            "message_id": event.message_id,
+            "session_id": event.session_id,
+        }),
+        "tool_call_start" => serde_json::json!({
+            "type": "tool_call",
+            "message_id": event.message_id,
+            "content": event.content,
+            "session_id": event.session_id,
+        }),
+        other => serde_json::json!({
+            "type": other,
+            "message_id": event.message_id,
+            "content": event.content,
+            "session_id": event.session_id,
+        }),
+    }
+    .to_string()
+}
 
-        process_chat_message(&state, &mut agent, &mut sender, &content, &session_key).await;
+fn unix_timestamp_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn web_channel_message(session_id: String, content: String) -> ChannelMessage {
+    ChannelMessage {
+        id: Uuid::new_v4().to_string(),
+        sender: "local-user".to_string(),
+        reply_target: session_id,
+        content,
+        channel: "web".to_string(),
+        timestamp: unix_timestamp_secs(),
+        thread_ts: None,
+        interruption_scope_id: None,
     }
 }
 
-/// Process a single chat message through the agent and send the response.
-async fn process_chat_message(
-    state: &AppState,
-    agent: &mut crate::agent::Agent,
-    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-    content: &str,
-    session_key: &str,
-) {
-    let provider_label = state
-        .config
-        .lock()
-        .default_provider
-        .clone()
-        .unwrap_or_else(|| "unknown".to_string());
+fn parse_ws_inbound_action(raw: &str) -> WsInboundAction {
+    let parsed: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return WsInboundAction::Error("Invalid JSON"),
+    };
 
-    // Broadcast agent_start event
-    let _ = state.event_tx.send(serde_json::json!({
-        "type": "agent_start",
-        "provider": provider_label,
-        "model": state.model,
-    }));
-
-    // Multi-turn chat via persistent Agent (history is maintained across turns)
-    match agent.turn(content).await {
-        Ok(response) => {
-            // Persist assistant response
-            if let Some(ref backend) = state.session_backend {
-                let assistant_msg = crate::providers::ChatMessage::assistant(&response);
-                let _ = backend.append(session_key, &assistant_msg);
+    match parsed["type"].as_str().unwrap_or("") {
+        "message" => {
+            let content = parsed["content"].as_str().unwrap_or("").trim().to_string();
+            if content.is_empty() {
+                WsInboundAction::Ignore
+            } else {
+                WsInboundAction::Message(content)
             }
-
-            let done = serde_json::json!({
-                "type": "done",
-                "full_response": response,
-            });
-            let _ = sender.send(Message::Text(done.to_string().into())).await;
-
-            // Broadcast agent_end event
-            let _ = state.event_tx.send(serde_json::json!({
-                "type": "agent_end",
-                "provider": provider_label,
-                "model": state.model,
-            }));
         }
-        Err(e) => {
-            let sanitized = crate::providers::sanitize_api_error(&e.to_string());
-            let err = serde_json::json!({
-                "type": "error",
-                "message": sanitized,
-            });
-            let _ = sender.send(Message::Text(err.to_string().into())).await;
-
-            // Broadcast error event
-            let _ = state.event_tx.send(serde_json::json!({
-                "type": "error",
-                "component": "ws_chat",
-                "message": sanitized,
-            }));
-        }
+        "cancel" => WsInboundAction::Cancel,
+        _ => WsInboundAction::Ignore,
     }
 }
 

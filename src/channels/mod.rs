@@ -46,6 +46,7 @@ pub mod transcription;
 pub mod tts;
 pub mod twitter;
 pub mod wati;
+pub mod web;
 pub mod webhook;
 pub mod wecom;
 pub mod whatsapp;
@@ -83,6 +84,7 @@ pub use traits::{Channel, SendMessage};
 pub use tts::{TtsManager, TtsProvider};
 pub use twitter::TwitterChannel;
 pub use wati::WatiChannel;
+pub use web::WebChannel;
 pub use webhook::WebhookChannel;
 pub use wecom::WeComChannel;
 pub use whatsapp::WhatsAppChannel;
@@ -115,6 +117,34 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use tokio_util::sync::CancellationToken;
+
+#[derive(Clone)]
+pub struct WebRuntimeHandle {
+    tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
+    channel: Arc<WebChannel>,
+}
+
+impl WebRuntimeHandle {
+    pub fn disconnected() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        Self {
+            tx,
+            channel: Arc::new(WebChannel::new()),
+        }
+    }
+
+    pub async fn send(&self, message: traits::ChannelMessage) -> Result<()> {
+        self.tx
+            .send(message)
+            .await
+            .map_err(|e| anyhow::anyhow!("web runtime unavailable: {e}"))
+    }
+
+    pub fn channel(&self) -> Arc<WebChannel> {
+        Arc::clone(&self.channel)
+    }
+}
 
 /// Observer wrapper that forwards tool-call events to a channel sender
 /// for real-time threaded notifications.
@@ -1978,6 +2008,206 @@ fn compute_max_in_flight_messages(channel_count: usize) -> usize {
         )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn build_runtime_context(
+    config: &Config,
+    provider: Arc<dyn Provider>,
+    provider_name: String,
+    mem: Arc<dyn Memory>,
+    tools_registry: Arc<Vec<Box<dyn Tool>>>,
+    observer: Arc<dyn Observer>,
+    system_prompt: String,
+    model: String,
+    temperature: f64,
+    channels_by_name: Arc<HashMap<String, Arc<dyn Channel>>>,
+    activated_tools: Option<std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
+) -> Arc<ChannelRuntimeContext> {
+    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
+    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
+    let provider_runtime_options = providers::ProviderRuntimeOptions {
+        auth_profile_override: None,
+        provider_api_url: config.api_url.clone(),
+        zeroclaw_dir: config.config_path.parent().map(PathBuf::from),
+        secrets_encrypt: config.secrets.encrypt,
+        reasoning_enabled: config.runtime.reasoning_enabled,
+        reasoning_effort: config.runtime.reasoning_effort.clone(),
+        provider_timeout_secs: Some(config.provider_timeout_secs),
+        extra_headers: config.extra_headers.clone(),
+        api_path: config.api_path.clone(),
+    };
+    let message_timeout_secs =
+        effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
+    let interrupt_on_new_message = config
+        .channels_config
+        .telegram
+        .as_ref()
+        .is_some_and(|tg| tg.interrupt_on_new_message);
+    let interrupt_on_new_message_slack = config
+        .channels_config
+        .slack
+        .as_ref()
+        .is_some_and(|sl| sl.interrupt_on_new_message);
+    let interrupt_on_new_message_discord = config
+        .channels_config
+        .discord
+        .as_ref()
+        .is_some_and(|dc| dc.interrupt_on_new_message);
+    let interrupt_on_new_message_mattermost = config
+        .channels_config
+        .mattermost
+        .as_ref()
+        .is_some_and(|mm| mm.interrupt_on_new_message);
+    let interrupt_on_new_message_matrix = config
+        .channels_config
+        .matrix
+        .as_ref()
+        .is_some_and(|mx| mx.interrupt_on_new_message);
+
+    Arc::new(ChannelRuntimeContext {
+        channels_by_name,
+        provider,
+        default_provider: Arc::new(provider_name),
+        prompt_config: Arc::new(config.clone()),
+        memory: mem,
+        tools_registry,
+        observer,
+        system_prompt: Arc::new(system_prompt),
+        model: Arc::new(model),
+        temperature,
+        auto_save_memory: config.memory.auto_save,
+        max_tool_iterations: config.agent.max_tool_iterations,
+        min_relevance_score: config.memory.min_relevance_score,
+        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+        pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
+        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        route_overrides: Arc::new(Mutex::new(HashMap::new())),
+        api_key: config.api_key.clone(),
+        api_url: config.api_url.clone(),
+        reliability: Arc::new(config.reliability.clone()),
+        provider_runtime_options,
+        workspace_dir: Arc::new(config.workspace_dir.clone()),
+        message_timeout_secs,
+        interrupt_on_new_message: InterruptOnNewMessageConfig {
+            telegram: interrupt_on_new_message,
+            slack: interrupt_on_new_message_slack,
+            discord: interrupt_on_new_message_discord,
+            mattermost: interrupt_on_new_message_mattermost,
+            matrix: interrupt_on_new_message_matrix,
+        },
+        multimodal: config.multimodal.clone(),
+        hooks: if config.hooks.enabled {
+            let mut runner = crate::hooks::HookRunner::new();
+            if config.hooks.builtin.command_logger {
+                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
+            }
+            if config.hooks.builtin.webhook_audit.enabled {
+                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
+                    config.hooks.builtin.webhook_audit.clone(),
+                )));
+            }
+            Some(Arc::new(runner))
+        } else {
+            None
+        },
+        non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
+        autonomy_level: config.autonomy.level,
+        tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
+        model_routes: Arc::new(config.model_routes.clone()),
+        query_classification: config.query_classification.clone(),
+        ack_reactions: config.channels_config.ack_reactions,
+        show_tool_calls: config.channels_config.show_tool_calls,
+        session_store: if config.channels_config.session_persistence {
+            match session_store::SessionStore::new(&config.workspace_dir) {
+                Ok(store) => {
+                    tracing::info!("📂 Session persistence enabled");
+                    Some(Arc::new(store))
+                }
+                Err(e) => {
+                    tracing::warn!("Session persistence disabled: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        },
+        approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
+        activated_tools,
+        cost_tracking: crate::cost::CostTracker::get_or_init_global(
+            config.cost.clone(),
+            &config.workspace_dir,
+        )
+        .map(|tracker| ChannelCostTrackingState {
+            tracker,
+            prices: Arc::new(config.cost.prices.clone()),
+        }),
+        pacing: config.pacing.clone(),
+    })
+}
+
+pub fn start_web_runtime(
+    config: &Config,
+    provider: Arc<dyn Provider>,
+    provider_name: String,
+    mem: Arc<dyn Memory>,
+    tools_registry: Arc<Vec<Box<dyn Tool>>>,
+    observer: Arc<dyn Observer>,
+    system_prompt: String,
+    model: String,
+    temperature: f64,
+) -> WebRuntimeHandle {
+    let web_channel = Arc::new(WebChannel::new());
+    let channels_by_name = Arc::new(HashMap::from([(
+        web_channel.name().to_string(),
+        Arc::clone(&web_channel) as Arc<dyn Channel>,
+    )]));
+    let runtime_ctx = build_runtime_context(
+        config,
+        provider,
+        provider_name,
+        mem,
+        tools_registry,
+        observer,
+        system_prompt,
+        model,
+        temperature,
+        channels_by_name,
+        None,
+    );
+    hydrate_persisted_session_histories(&runtime_ctx);
+    let max_in_flight_messages = compute_max_in_flight_messages(1);
+    let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
+    tokio::spawn(run_message_dispatch_loop(
+        rx,
+        runtime_ctx,
+        max_in_flight_messages,
+    ));
+
+    WebRuntimeHandle {
+        tx,
+        channel: web_channel,
+    }
+}
+
+fn hydrate_persisted_session_histories(runtime_ctx: &ChannelRuntimeContext) {
+    if let Some(ref store) = runtime_ctx.session_store {
+        let mut hydrated = 0usize;
+        let mut histories = runtime_ctx
+            .conversation_histories
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for key in store.list_sessions() {
+            let msgs = store.load(&key);
+            if !msgs.is_empty() {
+                hydrated += 1;
+                histories.insert(key, msgs);
+            }
+        }
+        drop(histories);
+        if hydrated > 0 {
+            tracing::info!("📂 Restored {hydrated} session(s) from disk");
+        }
+    }
+}
 fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
     if let Err(error) = result {
         tracing::error!("Channel message worker crashed: {error}");
@@ -2516,6 +2746,9 @@ async fn process_channel_message(
         break loop_result;
     };
 
+    // Close the producer side before awaiting the updater so draft-capable
+    // channels can finish draining updates and deliver the final response.
+    drop(delta_tx);
     if let Some(handle) = draft_updater {
         let _ = handle.await;
     }
@@ -4555,135 +4788,21 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
-    let message_timeout_secs =
-        effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
-    let interrupt_on_new_message = config
-        .channels_config
-        .telegram
-        .as_ref()
-        .is_some_and(|tg| tg.interrupt_on_new_message);
-    let interrupt_on_new_message_slack = config
-        .channels_config
-        .slack
-        .as_ref()
-        .is_some_and(|sl| sl.interrupt_on_new_message);
-    let interrupt_on_new_message_discord = config
-        .channels_config
-        .discord
-        .as_ref()
-        .is_some_and(|dc| dc.interrupt_on_new_message);
-    let interrupt_on_new_message_mattermost = config
-        .channels_config
-        .mattermost
-        .as_ref()
-        .is_some_and(|mm| mm.interrupt_on_new_message);
-    let interrupt_on_new_message_matrix = config
-        .channels_config
-        .matrix
-        .as_ref()
-        .is_some_and(|mx| mx.interrupt_on_new_message);
-
-    let runtime_ctx = Arc::new(ChannelRuntimeContext {
-        channels_by_name,
-        provider: Arc::clone(&provider),
-        default_provider: Arc::new(provider_name),
-        prompt_config: Arc::new(config.clone()),
-        memory: Arc::clone(&mem),
-        tools_registry: Arc::clone(&tools_registry),
+    let runtime_ctx = build_runtime_context(
+        &config,
+        Arc::clone(&provider),
+        provider_name,
+        Arc::clone(&mem),
+        Arc::clone(&tools_registry),
         observer,
-        system_prompt: Arc::new(system_prompt),
-        model: Arc::new(model.clone()),
+        system_prompt,
+        model.clone(),
         temperature,
-        auto_save_memory: config.memory.auto_save,
-        max_tool_iterations: config.agent.max_tool_iterations,
-        min_relevance_score: config.memory.min_relevance_score,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
-        route_overrides: Arc::new(Mutex::new(HashMap::new())),
-        api_key: config.api_key.clone(),
-        api_url: config.api_url.clone(),
-        reliability: Arc::new(config.reliability.clone()),
-        provider_runtime_options,
-        workspace_dir: Arc::new(config.workspace_dir.clone()),
-        message_timeout_secs,
-        interrupt_on_new_message: InterruptOnNewMessageConfig {
-            telegram: interrupt_on_new_message,
-            slack: interrupt_on_new_message_slack,
-            discord: interrupt_on_new_message_discord,
-            mattermost: interrupt_on_new_message_mattermost,
-            matrix: interrupt_on_new_message_matrix,
-        },
-        multimodal: config.multimodal.clone(),
-        hooks: if config.hooks.enabled {
-            let mut runner = crate::hooks::HookRunner::new();
-            if config.hooks.builtin.command_logger {
-                runner.register(Box::new(crate::hooks::builtin::CommandLoggerHook::new()));
-            }
-            if config.hooks.builtin.webhook_audit.enabled {
-                runner.register(Box::new(crate::hooks::builtin::WebhookAuditHook::new(
-                    config.hooks.builtin.webhook_audit.clone(),
-                )));
-            }
-            Some(Arc::new(runner))
-        } else {
-            None
-        },
-        non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
-        autonomy_level: config.autonomy.level,
-        tool_call_dedup_exempt: Arc::new(config.agent.tool_call_dedup_exempt.clone()),
-        model_routes: Arc::new(config.model_routes.clone()),
-        query_classification: config.query_classification.clone(),
-        ack_reactions: config.channels_config.ack_reactions,
-        show_tool_calls: config.channels_config.show_tool_calls,
-        session_store: if config.channels_config.session_persistence {
-            match session_store::SessionStore::new(&config.workspace_dir) {
-                Ok(store) => {
-                    tracing::info!("📂 Session persistence enabled");
-                    Some(Arc::new(store))
-                }
-                Err(e) => {
-                    tracing::warn!("Session persistence disabled: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        },
-        approval_manager: Arc::new(ApprovalManager::for_non_interactive(&config.autonomy)),
-        activated_tools: ch_activated_handle,
-        cost_tracking: crate::cost::CostTracker::get_or_init_global(
-            config.cost.clone(),
-            &config.workspace_dir,
-        )
-        .map(|tracker| ChannelCostTrackingState {
-            tracker,
-            prices: Arc::new(config.cost.prices.clone()),
-        }),
-        pacing: config.pacing.clone(),
-    });
+        channels_by_name,
+        ch_activated_handle,
+    );
 
-    // Hydrate in-memory conversation histories from persisted JSONL session files.
-    if let Some(ref store) = runtime_ctx.session_store {
-        let mut hydrated = 0usize;
-        let mut histories = runtime_ctx
-            .conversation_histories
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        for key in store.list_sessions() {
-            let msgs = store.load(&key);
-            if !msgs.is_empty() {
-                hydrated += 1;
-                histories.insert(key, msgs);
-            }
-        }
-        drop(histories);
-        if hydrated > 0 {
-            tracing::info!("📂 Restored {hydrated} session(s) from disk");
-        }
-    }
+    hydrate_persisted_session_histories(&runtime_ctx);
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
 
@@ -4800,6 +4919,54 @@ mod tests {
             ),
             300 * CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP
         );
+    }
+
+    #[test]
+    fn hydrate_persisted_session_histories_restores_web_sessions() {
+        let workspace = make_workspace();
+        let store = session_store::SessionStore::new(workspace.path()).unwrap();
+        store
+            .append("web_session-a", &ChatMessage::user("hello"))
+            .unwrap();
+        store
+            .append("web_session-a", &ChatMessage::assistant("hi"))
+            .unwrap();
+
+        let mut config = Config::default();
+        config.workspace_dir = workspace.path().to_path_buf();
+        config.channels_config.session_persistence = true;
+
+        let web_channel: Arc<dyn Channel> = Arc::new(WebChannel::new());
+        let channels_by_name = Arc::new(HashMap::from([(
+            "web".to_string(),
+            Arc::clone(&web_channel),
+        )]));
+        let runtime_ctx = build_runtime_context(
+            &config,
+            Arc::new(DummyProvider),
+            "test-provider".to_string(),
+            Arc::new(NoopMemory),
+            Arc::new(vec![]),
+            Arc::new(NoopObserver),
+            "system".to_string(),
+            "test-model".to_string(),
+            0.0,
+            channels_by_name,
+            None,
+        );
+
+        hydrate_persisted_session_histories(&runtime_ctx);
+
+        let histories = runtime_ctx
+            .conversation_histories
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let restored = histories
+            .get("web_session-a")
+            .expect("web session should be hydrated");
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].content, "hello");
+        assert_eq!(restored[1].content, "hi");
     }
 
     #[test]
@@ -5350,6 +5517,11 @@ mod tests {
         sent_messages: tokio::sync::Mutex<Vec<String>>,
     }
 
+    #[derive(Default)]
+    struct DraftRecordingChannel {
+        draft_events: tokio::sync::Mutex<Vec<String>>,
+    }
+
     #[async_trait::async_trait]
     impl Channel for TelegramRecordingChannel {
         fn name(&self) -> &str {
@@ -5406,6 +5578,74 @@ mod tests {
         }
 
         async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Channel for DraftRecordingChannel {
+        fn name(&self) -> &str {
+            "web"
+        }
+
+        async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+            self.draft_events
+                .lock()
+                .await
+                .push(format!("send:{}:{}", message.recipient, message.content));
+            Ok(())
+        }
+
+        async fn listen(
+            &self,
+            _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn start_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn supports_draft_updates(&self) -> bool {
+            true
+        }
+
+        async fn send_draft(&self, message: &SendMessage) -> anyhow::Result<Option<String>> {
+            self.draft_events.lock().await.push(format!(
+                "draft_start:{}:{}",
+                message.recipient, message.content
+            ));
+            Ok(Some("draft-1".to_string()))
+        }
+
+        async fn update_draft(
+            &self,
+            recipient: &str,
+            message_id: &str,
+            text: &str,
+        ) -> anyhow::Result<()> {
+            self.draft_events
+                .lock()
+                .await
+                .push(format!("draft_update:{recipient}:{message_id}:{text}"));
+            Ok(())
+        }
+
+        async fn finalize_draft(
+            &self,
+            recipient: &str,
+            message_id: &str,
+            text: &str,
+        ) -> anyhow::Result<()> {
+            self.draft_events
+                .lock()
+                .await
+                .push(format!("draft_finalize:{recipient}:{message_id}:{text}"));
             Ok(())
         }
     }
@@ -10030,6 +10270,103 @@ This is an example JSON object for profile settings."#;
             sent_messages.len(),
             2,
             "both Slack thread messages should complete, got: {sent_messages:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_dispatch_closes_draft_stream_before_waiting_for_updater() {
+        let channel_impl = Arc::new(DraftRecordingChannel::default());
+        let channel: Arc<dyn Channel> = channel_impl.clone();
+
+        let mut channels_by_name = HashMap::new();
+        channels_by_name.insert(channel.name().to_string(), channel);
+
+        let runtime_ctx = Arc::new(ChannelRuntimeContext {
+            channels_by_name: Arc::new(channels_by_name),
+            provider: Arc::new(HistoryCaptureProvider::default()),
+            default_provider: Arc::new("test-provider".to_string()),
+            memory: Arc::new(NoopMemory),
+            tools_registry: Arc::new(vec![]),
+            observer: Arc::new(NoopObserver),
+            system_prompt: Arc::new("test-system-prompt".to_string()),
+            model: Arc::new("test-model".to_string()),
+            temperature: 0.0,
+            auto_save_memory: false,
+            max_tool_iterations: 10,
+            min_relevance_score: 0.0,
+            conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+            pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
+            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            route_overrides: Arc::new(Mutex::new(HashMap::new())),
+            api_key: None,
+            api_url: None,
+            reliability: Arc::new(crate::config::ReliabilityConfig::default()),
+            provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+            workspace_dir: Arc::new(std::env::temp_dir()),
+            prompt_config: Arc::new(crate::config::Config::default()),
+            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+            interrupt_on_new_message: InterruptOnNewMessageConfig {
+                telegram: false,
+                slack: false,
+                discord: false,
+                mattermost: false,
+                matrix: false,
+            },
+            multimodal: crate::config::MultimodalConfig::default(),
+            hooks: None,
+            non_cli_excluded_tools: Arc::new(Vec::new()),
+            autonomy_level: AutonomyLevel::default(),
+            tool_call_dedup_exempt: Arc::new(Vec::new()),
+            model_routes: Arc::new(Vec::new()),
+            query_classification: crate::config::QueryClassificationConfig::default(),
+            ack_reactions: true,
+            show_tool_calls: true,
+            session_store: None,
+            approval_manager: Arc::new(ApprovalManager::for_non_interactive(
+                &crate::config::AutonomyConfig::default(),
+            )),
+            activated_tools: None,
+            cost_tracking: None,
+            pacing: crate::config::PacingConfig::default(),
+        });
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
+        tx.send(traits::ChannelMessage {
+            id: "msg-1".to_string(),
+            sender: "alice".to_string(),
+            reply_target: "session-1".to_string(),
+            content: "hello".to_string(),
+            channel: "web".to_string(),
+            timestamp: 1,
+            thread_ts: None,
+            interruption_scope_id: None,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            run_message_dispatch_loop(rx, runtime_ctx, 1),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "draft-enabled dispatch loop should not hang"
+        );
+
+        let events = channel_impl.draft_events.lock().await;
+        assert!(
+            events
+                .iter()
+                .any(|event| event == "draft_start:session-1:..."),
+            "expected draft start event, got: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event == "draft_finalize:session-1:draft-1:response-1"),
+            "expected draft finalize event, got: {events:?}"
         );
     }
 }
