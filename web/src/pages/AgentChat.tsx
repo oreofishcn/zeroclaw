@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { WsMessage } from '@/types/api';
-import { WebSocketClient } from '@/lib/ws';
+import { WebSocketClient, getOrCreateSessionId } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
 import { useDraft } from '@/hooks/useDraft';
 import { t } from '@/lib/i18n';
@@ -14,10 +16,74 @@ interface ChatMessage {
 }
 
 const DRAFT_KEY = 'agent-chat';
+const CHAT_STORAGE_PREFIX = 'zeroclaw_agent_chat_';
+const MAX_VISIBLE_MESSAGES = 100;
+
+function chatStorageKey(): string {
+  return `${CHAT_STORAGE_PREFIX}${getOrCreateSessionId()}`;
+}
+
+function capMessages(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length <= MAX_VISIBLE_MESSAGES) {
+    return messages;
+  }
+  return messages.slice(messages.length - MAX_VISIBLE_MESSAGES);
+}
+
+function loadPersistedMessages(): ChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(chatStorageKey());
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as Array<
+      Omit<ChatMessage, 'timestamp'> & { timestamp: string }
+    >;
+    return capMessages(
+      parsed.map((message) => ({
+        ...message,
+        timestamp: new Date(message.timestamp),
+      })),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistMessages(messages: ChatMessage[]): void {
+  try {
+    sessionStorage.setItem(chatStorageKey(), JSON.stringify(capMessages(messages)));
+  } catch {
+    // Ignore storage failures and keep the in-memory chat usable.
+  }
+}
+
+function extractToolName(msg: WsMessage): string {
+  if (msg.name && msg.name.trim()) {
+    return msg.name.trim();
+  }
+
+  const content = msg.content?.trim();
+  if (!content) {
+    return 'tool';
+  }
+
+  const quotedName = content.match(/`([^`]+)`/);
+  if (quotedName?.[1]) {
+    return quotedName[1];
+  }
+
+  const plainName = content.match(/^Running\s+([A-Za-z0-9_.-]+)/i);
+  if (plainName?.[1]) {
+    return plainName[1];
+  }
+
+  return 'tool';
+}
 
 export default function AgentChat() {
   const { draft, saveDraft, clearDraft } = useDraft(DRAFT_KEY);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadPersistedMessages());
   const [input, setInput] = useState(draft);
   const [typing, setTyping] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -61,15 +127,17 @@ export default function AgentChat() {
         case 'done': {
           const content = msg.full_response ?? msg.content ?? pendingContentRef.current;
           if (content) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: generateUUID(),
-                role: 'agent',
-                content,
-                timestamp: new Date(),
-              },
-            ]);
+            setMessages((prev) =>
+              capMessages([
+                ...prev,
+                {
+                  id: generateUUID(),
+                  role: 'agent',
+                  content,
+                  timestamp: new Date(),
+                },
+              ]),
+            );
           }
           pendingContentRef.current = '';
           setTyping(false);
@@ -77,39 +145,39 @@ export default function AgentChat() {
         }
 
         case 'tool_call':
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: generateUUID(),
-              role: 'agent',
-              content: `${t('agent.tool_call_prefix')} ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
-              timestamp: new Date(),
-            },
-          ]);
+          setMessages((prev) =>
+            capMessages([
+              ...prev,
+              {
+                id: generateUUID(),
+                role: 'agent',
+                content: `Running ${extractToolName(msg)}...`,
+                timestamp: new Date(),
+              },
+            ]),
+          );
           break;
 
         case 'tool_result':
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: generateUUID(),
-              role: 'agent',
-              content: `${t('agent.tool_result_prefix')} ${msg.output ?? ''}`,
-              timestamp: new Date(),
-            },
-          ]);
+          break;
+
+        case 'message_cancelled':
+          setTyping(false);
+          pendingContentRef.current = '';
           break;
 
         case 'error':
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: generateUUID(),
-              role: 'agent',
-              content: `${t('agent.error_prefix')} ${msg.message ?? t('agent.unknown_error')}`,
-              timestamp: new Date(),
-            },
-          ]);
+          setMessages((prev) =>
+            capMessages([
+              ...prev,
+              {
+                id: generateUUID(),
+                role: 'agent',
+                content: `${t('agent.error_prefix')} ${msg.message ?? t('agent.unknown_error')}`,
+                timestamp: new Date(),
+              },
+            ]),
+          );
           setTyping(false);
           pendingContentRef.current = '';
           break;
@@ -125,6 +193,10 @@ export default function AgentChat() {
   }, []);
 
   useEffect(() => {
+    persistMessages(messages);
+  }, [messages]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typing]);
 
@@ -132,15 +204,17 @@ export default function AgentChat() {
     const trimmed = input.trim();
     if (!trimmed || !wsRef.current?.connected) return;
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateUUID(),
-        role: 'user',
-        content: trimmed,
-        timestamp: new Date(),
-      },
-    ]);
+    setMessages((prev) =>
+      capMessages([
+        ...prev,
+        {
+          id: generateUUID(),
+          role: 'user',
+          content: trimmed,
+          timestamp: new Date(),
+        },
+      ]),
+    );
 
     try {
       wsRef.current.sendMessage(trimmed);
@@ -260,7 +334,24 @@ export default function AgentChat() {
                     : { background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)', color: 'var(--pc-text-primary)', }
                 }
               >
-                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                {msg.role === 'agent' ? (
+                  <div className="break-words text-sm text-inherit leading-relaxed [--chat-accent:var(--pc-accent)] [--chat-border:var(--pc-border)] [--chat-code-bg:var(--pc-bg)] [--chat-faint:var(--pc-text-faint)] [&_a]:text-[var(--chat-accent)] [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--chat-border)] [&_blockquote]:pl-4 [&_blockquote]:text-[var(--chat-faint)] [&_code]:rounded-md [&_code]:bg-[var(--chat-code-bg)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--chat-border)] [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-[var(--chat-border)] [&_pre]:bg-[var(--chat-code-bg)] [&_pre]:p-3 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:w-full [&_tbody_td]:px-4 [&_tbody_td]:py-3 [&_tbody_td]:align-top [&_tbody_td]:text-sm [&_thead_th]:text-left [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        table: ({ children }) => (
+                          <div className="my-4 overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg)' }}>
+                            <table>{children}</table>
+                          </div>
+                        ),
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                )}
                 <p
                   className="text-[10px] mt-1.5" style={{ color: msg.role === 'user' ? 'var(--pc-accent-light)' : 'var(--pc-text-faint)' }}>
                   {msg.timestamp.toLocaleTimeString()}
