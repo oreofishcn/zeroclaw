@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { basePath } from '../../lib/basePath';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -28,30 +29,28 @@ const navItems = [
 
 export default function Sidebar() {
   return (
-    <aside className="theme-sidebar sticky top-0 h-screen w-60 flex flex-col">
-      {/* Glow line on right edge */}
-      <div className="sidebar-glow-line" />
-
+    <aside className="fixed top-0 left-0 h-screen w-60 flex flex-col border-r" style={{ background: 'var(--pc-bg-base)', borderColor: 'var(--pc-border)' }}>
       {/* Logo / Title */}
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-[var(--color-border-default)]/70">
-        <img
-          src="/_app/zeroclaw-trans.png"
-          alt="ZeroClaw"
-          className="theme-logo h-10 w-10 rounded-xl object-cover animate-pulse-glow"
-        />
-        <span className="text-lg font-bold text-gradient-blue tracking-wide">
+      <div className="flex items-center gap-3 px-4 py-4 border-b h-14" style={{ borderColor: 'var(--pc-border)' }}>
+        <div className="relative shrink-0">
+          <div className="absolute -inset-1.5 rounded-xl" style={{ background: 'linear-gradient(135deg, rgba(var(--pc-accent-rgb), 0.15), rgba(var(--pc-accent-rgb), 0.05))' }} />
+          <img
+            src={`${basePath}/_app/zeroclaw-trans.png`}
+            alt="ZeroClaw"
+            className="relative h-9 w-9 rounded-xl object-cover"
+            onError={(e) => {
+              const img = e.currentTarget;
+              img.style.display = 'none';
+            }}
+          />
+        </div>
+        <span className="text-sm font-semibold tracking-wide" style={{ color: 'var(--pc-text-primary)' }}>
           ZeroClaw
         </span>
       </div>
-      <div className="px-4 pt-4">
-        <div className="theme-stat-tile px-3 py-2">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-theme-faint">Workspace</p>
-          <p className="mt-1 text-xs font-semibold text-theme-primary">Agent Control Center</p>
-        </div>
-      </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1.5">
+      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
         {navItems.map(({ to, icon: Icon, labelKey }, idx) => (
           <NavLink
             key={to}
@@ -59,24 +58,24 @@ export default function Sidebar() {
             end={to === '/'}
             className={({ isActive }) =>
               [
-                'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 animate-slide-in-left group',
+                'flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-medium transition-all group',
                 isActive
-                  ? 'theme-nav-active shadow-[0_12px_28px_var(--color-accent-shadow)]'
-                  : 'text-theme-muted hover:text-theme-primary hover:bg-[var(--color-accent-blue-soft)]',
+                  ? 'text-[var(--pc-accent-light)]'
+                  : 'text-[var(--pc-text-muted)] hover:text-[var(--pc-text-secondary)] hover:bg-[var(--pc-hover)]',
               ].join(' ')
             }
             style={({ isActive }) => ({
               animationDelay: `${idx * 40}ms`,
-              ...(isActive ? { background: 'var(--color-accent-panel)' } : {}),
+              ...(isActive ? {
+                background: 'var(--pc-accent-glow)',
+                border: '1px solid var(--pc-accent-dim)',
+              } : {}),
             })}
           >
             {({ isActive }) => (
               <>
-                <Icon className={`h-5 w-5 flex-shrink-0 transition-colors duration-300 ${isActive ? 'text-[var(--color-accent-blue)]' : 'group-hover:text-[var(--color-accent-blue)]'}`} />
+                <Icon className={`h-5 w-5 flex-shrink-0 transition-colors ${isActive ? 'text-[var(--pc-accent)]' : 'group-hover:text-[var(--pc-accent)]'}`} />
                 <span>{t(labelKey)}</span>
-                {isActive && (
-                  <div className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--color-accent-blue)] glow-dot" />
-                )}
               </>
             )}
           </NavLink>
@@ -84,8 +83,8 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-5 py-4 border-t border-[var(--color-border-default)]/70">
-        <p className="text-[10px] text-theme-faint tracking-wider uppercase">ZeroClaw Runtime</p>
+      <div className="px-5 py-4 border-t text-[10px] uppercase tracking-wider" style={{ borderColor: 'var(--pc-border)', color: 'var(--pc-text-faint)' }}>
+        ZeroClaw Runtime
       </div>
     </aside>
   );

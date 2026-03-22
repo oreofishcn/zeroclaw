@@ -282,35 +282,25 @@ export default function AgentChat() {
     }
   }
 
-  const agentBubbleBg = 'linear-gradient(135deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 84%, var(--color-bg-secondary) 16%))';
-  const userBubbleBg = 'linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-blue-hover))';
-  const agentAvatarBg = 'linear-gradient(135deg, color-mix(in srgb, var(--color-bg-elevated) 88%, var(--color-border-default) 12%), color-mix(in srgb, var(--color-bg-secondary) 88%, var(--color-border-subtle) 12%))';
-
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       {/* Connection status bar */}
       {error && (
-        <div
-          className="px-4 py-2 flex items-center gap-2 text-sm text-[var(--color-status-error-soft)] animate-fade-in"
-          style={{
-            background: 'color-mix(in srgb, var(--color-status-error) 10%, transparent)',
-            borderBottom: '1px solid color-mix(in srgb, var(--color-status-error) 22%, transparent)',
-          }}
-        >
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+        <div className="px-4 py-2 border-b flex items-center gap-2 text-sm animate-fade-in" style={{ background: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', }}>
+          <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </div>
       )}
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-theme-faint animate-fade-in">
-            <div className="h-16 w-16 rounded-2xl flex items-center justify-center mb-4 animate-float" style={{ background: 'var(--color-accent-panel)' }}>
-              <Bot className="h-8 w-8 text-[#0080ff]" />
+          <div className="flex flex-col items-center justify-center h-full text-center animate-fade-in" style={{ color: 'var(--pc-text-muted)' }}>
+            <div className="h-16 w-16 rounded-3xl flex items-center justify-center mb-4 animate-float" style={{ background: 'var(--pc-accent-glow)' }}>
+              <Bot className="h-8 w-8" style={{ color: 'var(--pc-accent)' }} />
             </div>
-            <p className="text-lg font-semibold text-theme-primary mb-1">ZeroClaw Agent</p>
-            <p className="text-sm text-theme-muted">{t('agent.start_conversation')}</p>
+            <p className="text-lg font-semibold mb-1" style={{ color: 'var(--pc-text-primary)' }}>ZeroClaw Agent</p>
+            <p className="text-sm" style={{ color: 'var(--pc-text-muted)' }}>{t('agent.start_conversation')}</p>
           </div>
         )}
 
@@ -323,45 +313,34 @@ export default function AgentChat() {
             style={{ animationDelay: `${Math.min(idx * 30, 200)}ms` }}
           >
             <div
-              className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center ${
-                msg.role === 'user'
-                  ? ''
-                  : ''
-              }`}
+              className="flex-shrink-0 w-9 h-9 rounded-2xl flex items-center justify-center border"
               style={{
-                background: msg.role === 'user'
-                  ? 'linear-gradient(135deg, var(--color-accent-blue), color-mix(in srgb, var(--color-accent-blue-hover) 88%, black 12%))'
-                  : agentAvatarBg
+                background: msg.role === 'user' ? 'var(--pc-accent)' : 'var(--pc-bg-elevated)',
+                borderColor: msg.role === 'user' ? 'var(--pc-accent)' : 'var(--pc-border)',
               }}
             >
               {msg.role === 'user' ? (
                 <User className="h-4 w-4 text-white" />
               ) : (
-                <Bot className="h-4 w-4 text-[#0080ff]" />
+                <Bot className="h-4 w-4" style={{ color: 'var(--pc-accent)' }} />
               )}
             </div>
             <div className="relative max-w-[75%]">
               <div
-                className={`rounded-2xl px-4 py-3 ${
+                className="rounded-2xl px-4 py-3 border"
+                style={
                   msg.role === 'user'
-                    ? 'text-white'
-                    : 'text-theme-primary border'
-                }`}
-                style={{
-                  background: msg.role === 'user'
-                    ? userBubbleBg
-                    : agentBubbleBg,
-                  borderColor: msg.role === 'user' ? 'transparent' : 'var(--color-border-default)',
-                  boxShadow: msg.role === 'user' ? '0 16px 34px var(--color-accent-shadow)' : 'none',
-                }}
+                    ? { background: 'var(--pc-accent-glow)', borderColor: 'var(--pc-accent-dim)', color: 'var(--pc-text-primary)', }
+                    : { background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)', color: 'var(--pc-text-primary)', }
+                }
               >
                 {msg.role === 'agent' ? (
-                  <div className="break-words text-sm text-inherit [&_a]:text-[var(--color-link)] [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border-default)] [&_blockquote]:pl-4 [&_blockquote]:text-[var(--color-text-soft)] [&_code]:rounded-md [&_code]:bg-[var(--color-bg-input)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_code]:text-[var(--color-accent-blue)] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-[var(--color-text-primary)] [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-[var(--color-text-primary)] [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-[var(--color-text-emphasis)] [&_hr]:my-4 [&_hr]:border-[var(--color-border-default)] [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-[var(--color-border-default)] [&_pre]:bg-[var(--color-bg-input)] [&_pre]:p-3 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre]:text-[var(--color-text-emphasis)] [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text-primary)] [&_table]:table-electric [&_tbody_td]:px-4 [&_tbody_td]:py-3 [&_tbody_td]:align-top [&_tbody_td]:text-sm [&_tbody_td]:text-[var(--color-text-emphasis)] [&_thead_th]:text-left [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+                  <div className="break-words text-sm text-inherit leading-relaxed [--chat-accent:var(--pc-accent)] [--chat-border:var(--pc-border)] [--chat-code-bg:var(--pc-bg)] [--chat-faint:var(--pc-text-faint)] [&_a]:text-[var(--chat-accent)] [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--chat-border)] [&_blockquote]:pl-4 [&_blockquote]:text-[var(--chat-faint)] [&_code]:rounded-md [&_code]:bg-[var(--chat-code-bg)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-[var(--chat-border)] [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_p]:leading-7 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-[var(--chat-border)] [&_pre]:bg-[var(--chat-code-bg)] [&_pre]:p-3 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:w-full [&_tbody_td]:px-4 [&_tbody_td]:py-3 [&_tbody_td]:align-top [&_tbody_td]:text-sm [&_thead_th]:text-left [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
                         table: ({ children }) => (
-                          <div className="my-4 overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--color-border-default)', background: 'var(--color-bg-input)' }}>
+                          <div className="my-4 overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg)' }}>
                             <table>{children}</table>
                           </div>
                         ),
@@ -371,24 +350,23 @@ export default function AgentChat() {
                     </ReactMarkdown>
                   </div>
                 ) : (
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
                 )}
                 <p
-                  className={`text-[10px] mt-1.5 ${
-                    msg.role === 'user' ? 'text-white/55' : 'text-theme-faint'
-                  }`}
-                >
+                  className="text-[10px] mt-1.5" style={{ color: msg.role === 'user' ? 'var(--pc-accent-light)' : 'var(--pc-text-faint)' }}>
                   {msg.timestamp.toLocaleTimeString()}
                 </p>
               </div>
               <button
                 onClick={() => handleCopy(msg.id, msg.content)}
                 aria-label={t('agent.copy_message')}
-                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-all duration-300 p-1.5 rounded-lg text-theme-muted hover:text-theme-primary"
-                style={{ background: 'var(--color-bg-input)', border: '1px solid var(--color-border-default)' }}
+                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-all p-1.5 rounded-xl"
+                style={{ background: 'var(--pc-bg-elevated)', border: '1px solid var(--pc-border)', color: 'var(--pc-text-muted)', }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--pc-text-primary)'; e.currentTarget.style.borderColor = 'var(--pc-accent-dim)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--pc-text-muted)'; e.currentTarget.style.borderColor = 'var(--pc-border)'; }}
               >
                 {copiedId === msg.id ? (
-                  <Check className="h-3 w-3 text-[var(--color-status-success)]" />
+                  <Check className="h-3 w-3" style={{ color: '#34d399' }} />
                 ) : (
                   <Copy className="h-3 w-3" />
                 )}
@@ -399,15 +377,13 @@ export default function AgentChat() {
 
         {typing && (
           <div className="flex items-start gap-3 animate-fade-in">
-            <div className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: agentAvatarBg }}>
-              <Bot className="h-4 w-4 text-[#0080ff]" />
+            <div className="flex-shrink-0 w-9 h-9 rounded-2xl flex items-center justify-center border" style={{ background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)' }}>
+              <Bot className="h-4 w-4" style={{ color: 'var(--pc-accent)' }} />
             </div>
-            <div className="rounded-2xl px-4 py-3 border" style={{ background: agentBubbleBg, borderColor: 'var(--color-border-default)' }}>
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-[var(--color-accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 bg-[var(--color-accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 bg-[var(--color-accent-blue)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
+            <div className="rounded-2xl px-4 py-3 border flex items-center gap-1.5" style={{ background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)' }}>
+              <span className="bounce-dot w-1.5 h-1.5 rounded-full" style={{ background: 'var(--pc-accent)' }} />
+              <span className="bounce-dot w-1.5 h-1.5 rounded-full" style={{ background: 'var(--pc-accent)' }} />
+              <span className="bounce-dot w-1.5 h-1.5 rounded-full" style={{ background: 'var(--pc-accent)' }} />
             </div>
           </div>
         )}
@@ -416,36 +392,38 @@ export default function AgentChat() {
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 p-4" style={{ borderTop: '1px solid var(--color-border-default)', background: 'var(--color-header-bg)' }}>
-        <div className="flex w-full items-start gap-3">
-          <div className="flex-1">
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={handleTextareaChange}
-              onKeyDown={handleKeyDown}
-              placeholder={connected ? t('agent.type_message') : t('agent.connecting')}
-              disabled={!connected}
-              className="input-electric w-full px-4 py-3 text-sm resize-none overflow-y-auto disabled:opacity-40"
-              style={{ minHeight: '44px', maxHeight: '200px' }}
-            />
-          </div>
+      <div className="border-t p-4" style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg-surface)' }}>
+        <div className="flex items-center gap-3 max-w-4xl mx-auto">
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={input}
+            onChange={handleTextareaChange}
+            onKeyDown={handleKeyDown}
+            placeholder={connected ? t('agent.type_message') : t('agent.connecting')}
+            disabled={!connected}
+            className="input-electric flex-1 px-4 text-sm resize-none disabled:opacity-40"
+            style={{ minHeight: '44px', maxHeight: '200px', paddingTop: '10px', paddingBottom: '10px' }}
+          />
           <button
+            type='button'
             onClick={handleSend}
             disabled={!connected || !input.trim()}
-            className="btn-electric flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl"
+            className="btn-electric flex-shrink-0 rounded-2xl flex items-center justify-center"
+            style={{ color: 'white', width: '40px', height: '40px' }}
           >
             <Send className="h-5 w-5" />
           </button>
         </div>
-        <div className="flex items-center justify-end mt-2 gap-2">
+        <div className="flex items-center justify-center mt-2 gap-2">
           <span
-            className={`inline-block h-1.5 w-1.5 rounded-full glow-dot ${
-              connected ? 'text-[var(--color-status-success)] bg-[var(--color-status-success)]' : 'text-[var(--color-status-error)] bg-[var(--color-status-error)]'
-            }`}
+            className="status-dot"
+            style={connected
+              ? { background: 'var(--color-status-success)', boxShadow: '0 0 6px var(--color-status-success)' }
+              : { background: 'var(--color-status-error)', boxShadow: '0 0 6px var(--color-status-error)' }
+            }
           />
-          <span className="text-[10px] text-theme-faint">
+          <span className="text-[10px]" style={{ color: 'var(--pc-text-faint)' }}>
             {connected ? t('agent.connected_status') : t('agent.disconnected_status')}
           </span>
         </div>

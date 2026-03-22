@@ -29,13 +29,13 @@ function healthColor(status: string): string {
   switch (status.toLowerCase()) {
     case 'ok':
     case 'healthy':
-      return 'bg-[#00e68a]';
+      return 'var(--color-status-success)';
     case 'warn':
     case 'warning':
     case 'degraded':
-      return 'bg-[#ffaa00]';
+      return 'var(--color-status-warning)';
     default:
-      return 'bg-[#ff4466]';
+      return 'var(--color-status-error)';
   }
 }
 
@@ -43,15 +43,61 @@ function healthBorder(status: string): string {
   switch (status.toLowerCase()) {
     case 'ok':
     case 'healthy':
-      return 'border-[#00e68a30]';
+      return 'rgba(0, 230, 138, 0.2)';
     case 'warn':
     case 'warning':
     case 'degraded':
-      return 'border-[#ffaa0030]';
+      return 'rgba(255, 170, 0, 0.2)';
     default:
-      return 'border-[#ff446630]';
+      return 'rgba(255, 68, 102, 0.2)';
   }
 }
+
+function healthBg(status: string): string {
+  switch (status.toLowerCase()) {
+    case 'ok':
+    case 'healthy':
+      return 'rgba(0, 230, 138, 0.05)';
+    case 'warn':
+    case 'warning':
+    case 'degraded':
+      return 'rgba(255, 170, 0, 0.05)';
+    default:
+      return 'rgba(255, 68, 102, 0.05)';
+  }
+}
+
+const STATUS_CARDS = [
+  {
+    icon: Cpu,
+    accent: "var(--pc-accent)",
+    labelKey: "dashboard.provider_model",
+    getValue: (s: StatusResponse) => s.provider ?? "Unknown",
+    getSub: (s: StatusResponse) => s.model ?? "",
+  },
+  {
+    icon: Clock,
+    accent: "#34d399",
+    labelKey: "dashboard.uptime",
+    getValue: (s: StatusResponse) => formatUptime(s.uptime_seconds),
+    getSub: () => t("dashboard.since_last_restart"),
+  },
+  {
+    icon: Globe,
+    accent: "#a78bfa",
+    labelKey: "dashboard.gateway_port",
+    getValue: (s: StatusResponse) => `:${s.gateway_port}`,
+    getSub: () => "",
+  },
+  {
+    icon: Database,
+    accent: "#fbbf24",
+    labelKey: "dashboard.memory_backend",
+    getValue: (s: StatusResponse) => s.memory_backend,
+    getSub: (s: StatusResponse) =>
+      `${t("dashboard.paired")}: ${s.paired ? t("dashboard.paired_yes") : t("dashboard.paired_no")}`,
+  },
+];
 
 export default function Dashboard() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -71,16 +117,8 @@ export default function Dashboard() {
   if (error) {
     return (
       <div className="p-6 animate-fade-in">
-        <div
-          className="rounded-xl p-4 text-[var(--color-status-error-soft)]"
-          style={{
-            background:
-              'color-mix(in srgb, var(--color-status-error) 10%, transparent)',
-            border:
-              '1px solid color-mix(in srgb, var(--color-status-error) 22%, transparent)',
-          }}
-        >
-          {t('dashboard.load_error')}: {error}
+        <div className="rounded-2xl border p-4" style={{ background: "rgba(239, 68, 68, 0.08)", borderColor: "rgba(239, 68, 68, 0.2)", color: "#f87171", }}>
+          {t("dashboard.load_error")}: {error}
         </div>
       </div>
     );
@@ -89,7 +127,7 @@ export default function Dashboard() {
   if (!status || !cost) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="theme-spinner h-8 w-8 rounded-full animate-spin" />
+        <div className="h-8 w-8 border-2 rounded-full animate-spin" style={{ borderColor: "var(--pc-border)", borderTopColor: "var(--pc-accent)", }}/>
       </div>
     );
   }
@@ -98,173 +136,68 @@ export default function Dashboard() {
     cost.session_cost_usd,
     cost.daily_cost_usd,
     cost.monthly_cost_usd,
-    0.001,
+    0.001
   );
-  const componentStatuses = Object.values(status.health.components).map(
-    (component) => component.status.toLowerCase(),
-  );
-  const overallHealth = componentStatuses.some(
-    (state) => state === 'error' || state === 'failed',
-  )
-    ? 'error'
-    : componentStatuses.some(
-          (state) =>
-            state === 'warn' ||
-            state === 'warning' ||
-            state === 'degraded',
-        )
-      ? 'warning'
-      : 'healthy';
 
   return (
-    <div className="theme-page space-y-6 animate-fade-in">
-      <section className="theme-hero-card">
-        <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-2xl">
-            <p className="theme-eyebrow">Overview</p>
-            <h2 className="theme-title mt-3">System status in a softer light.</h2>
-            <p className="theme-subtitle mt-3">
-              The dashboard now follows the same bright control-panel language
-              as the reference panels: muted surfaces, airy spacing, pale blue
-              emphasis, and clearer status groupings.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <span className="theme-chip text-xs font-semibold">
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${healthColor(overallHealth)} glow-dot`}
-                />
-                {overallHealth}
-              </span>
-              <span className="theme-chip text-xs font-semibold">
-                <Cpu className="h-3.5 w-3.5 text-[var(--color-accent-blue)]" />
-                {status.provider ?? 'Unknown'}
-              </span>
-              <span className="theme-chip text-xs font-semibold">
-                <Clock className="h-3.5 w-3.5 text-[var(--color-status-success)]" />
-                {formatUptime(status.uptime_seconds)}
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {[
-              { label: 'Gateway', value: `:${status.gateway_port}` },
-              { label: 'Memory', value: status.memory_backend },
-              { label: 'Locale', value: status.locale },
-            ].map(({ label, value }) => (
-              <div
-                key={label}
-                className="theme-stat-tile min-w-[8.5rem] px-4 py-3"
-              >
-                <p className="text-[10px] uppercase tracking-[0.18em] text-theme-faint">
-                  {label}
-                </p>
-                <p className="mt-1 text-sm font-semibold text-theme-primary truncate">
-                  {value}
-                </p>
+    <div className="p-6 space-y-6 animate-fade-in">
+      {/* Status Cards Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
+        {STATUS_CARDS.map(({ icon: Icon, accent, labelKey, getValue, getSub }) => (
+          <div key={labelKey} className="card p-5 animate-slide-in-up">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-2xl" style={{ background: `rgba(var(--pc-accent-rgb), 0.08)`, color: accent, }}>
+                <Icon className="h-5 w-5" />
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 stagger-children">
-        {[
-          {
-            icon: Cpu,
-            color: '#0080ff',
-            bg: '#0080ff15',
-            label: t('dashboard.provider_model'),
-            value: status.provider ?? 'Unknown',
-            sub: status.model,
-          },
-          {
-            icon: Clock,
-            color: '#00e68a',
-            bg: '#00e68a15',
-            label: t('dashboard.uptime'),
-            value: formatUptime(status.uptime_seconds),
-            sub: t('dashboard.since_last_restart'),
-          },
-          {
-            icon: Globe,
-            color: '#a855f7',
-            bg: '#a855f715',
-            label: t('dashboard.gateway_port'),
-            value: `:${status.gateway_port}`,
-            sub: '',
-          },
-          {
-            icon: Database,
-            color: '#ff8800',
-            bg: '#ff880015',
-            label: t('dashboard.memory_backend'),
-            value: status.memory_backend,
-            sub: `${t('dashboard.paired')}: ${status.paired ? t('dashboard.paired_yes') : t('dashboard.paired_no')}`,
-          },
-        ].map(({ icon: Icon, color, bg, label, value, sub }) => (
-          <div key={label} className="glass-card p-5 animate-slide-in-up">
-            <div className="mb-3 flex items-center gap-3">
-              <div
-                className="rounded-xl p-2"
-                style={{
-                  background: bg,
-                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.2)',
-                }}
-              >
-                <Icon className="h-5 w-5" style={{ color }} />
-              </div>
-              <span className="text-xs font-medium uppercase tracking-wider text-theme-muted">
-                {label}
-              </span>
+              <span className="text-xs uppercase tracking-wider font-medium" style={{ color: "var(--pc-text-muted)" }}>{t(labelKey)}</span>
             </div>
-            <p className="truncate text-lg font-semibold capitalize text-theme-primary">
-              {value}
-            </p>
-            <p className="truncate text-sm text-theme-muted">{sub}</p>
+            <p className="text-lg font-semibold truncate capitalize" style={{ color: "var(--pc-text-primary)" }}>{getValue(status)}</p>
+            <p className="text-sm truncate" style={{ color: "var(--pc-text-muted)" }}>{getSub(status)}</p>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 stagger-children">
-        <div className="glass-card p-5 animate-slide-in-up">
-          <div className="mb-5 flex items-center gap-2">
-            <DollarSign className="h-5 w-5 text-[#0080ff]" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-theme-primary">
-              {t('dashboard.cost_overview')}
-            </h2>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 stagger-children">
+        {/* Cost Widget */}
+        <div className="card p-5 animate-slide-in-up">
+          <div className="flex items-center gap-2 mb-5">
+            <DollarSign className="h-5 w-5" style={{ color: "var(--pc-accent)" }} />
+            <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--pc-text-primary)" }}>{t("dashboard.cost_overview")}</h2>
           </div>
           <div className="space-y-4">
             {[
               {
-                label: t('dashboard.session_label'),
+                label: t("dashboard.session_label"),
                 value: cost.session_cost_usd,
-                color: '#0080ff',
+                color: "var(--pc-accent)",
               },
               {
-                label: t('dashboard.daily_label'),
+                label: t("dashboard.daily_label"),
                 value: cost.daily_cost_usd,
-                color: '#00e68a',
+                color: "#34d399",
               },
               {
-                label: t('dashboard.monthly_label'),
+                label: t("dashboard.monthly_label"),
                 value: cost.monthly_cost_usd,
-                color: '#a855f7',
+                color: "#a78bfa",
               },
             ].map(({ label, value, color }) => (
               <div key={label}>
-                <div className="mb-1.5 flex justify-between text-sm">
-                  <span className="text-theme-muted">{label}</span>
-                  <span className="font-mono font-medium text-theme-primary">
+                <div className="flex justify-between text-sm mb-1.5">
+                  <span style={{ color: "var(--pc-text-muted)" }}>{label}</span>
+                  <span
+                    className="font-medium font-mono"
+                    style={{ color: "var(--pc-text-primary)" }}
+                  >
                     {formatUSD(value)}
                   </span>
                 </div>
                 <div
-                  className="h-1.5 w-full overflow-hidden rounded-full"
-                  style={{ background: 'var(--color-bg-track)' }}
+                  className="w-full h-1.5 rounded-full overflow-hidden"
+                  style={{ background: "var(--pc-hover)" }}
                 >
                   <div
-                    className="progress-bar-animated h-full rounded-full transition-all duration-700 ease-out"
+                    className="h-full rounded-full progress-bar-animated transition-all duration-700 ease-out"
                     style={{
                       width: `${Math.max((value / maxCost) * 100, 2)}%`,
                       background: color,
@@ -274,140 +207,178 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-          <div className="mt-5 flex justify-between border-t border-[var(--color-border-default)]/70 pt-4 text-sm">
-            <span className="text-theme-muted">
-              {t('dashboard.total_tokens_label')}
+          <div
+            className="mt-5 pt-4 border-t flex justify-between text-sm"
+            style={{ borderColor: "var(--pc-border)" }}
+          >
+            <span style={{ color: "var(--pc-text-muted)" }}>
+              {t("dashboard.total_tokens_label")}
             </span>
-            <span className="font-mono text-theme-primary">
+            <span className="font-mono" style={{ color: "var(--pc-text-primary)" }}>
               {cost.total_tokens.toLocaleString()}
             </span>
           </div>
-          <div className="mt-1 flex justify-between text-sm">
-            <span className="text-theme-muted">
-              {t('dashboard.requests_label')}
+          <div className="flex justify-between text-sm mt-1">
+            <span style={{ color: "var(--pc-text-muted)" }}>
+              {t("dashboard.requests_label")}
             </span>
-            <span className="font-mono text-theme-primary">
+            <span className="font-mono" style={{ color: "var(--pc-text-primary)" }}>
               {cost.request_count.toLocaleString()}
             </span>
           </div>
         </div>
 
-        <div className="glass-card p-5 animate-slide-in-up">
-          <div className="mb-5 flex items-center gap-2">
-            <Radio className="h-5 w-5 text-[#0080ff]" />
-            <h2 className="flex-1 text-sm font-semibold uppercase tracking-wider text-theme-primary">
-              {t('dashboard.channels')}
+        {/* Active Channels */}
+        <div className="card p-5 animate-slide-in-up">
+          <div className="flex items-center gap-2 mb-5">
+            <Radio className="h-5 w-5" style={{ color: "var(--pc-accent)" }} />
+            <h2
+              className="text-sm font-semibold uppercase tracking-wider"
+              style={{ color: "var(--pc-text-primary)" }}
+            >
+              {t("dashboard.active_channels")}
             </h2>
             <button
-              onClick={() => setShowAllChannels((value) => !value)}
-              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-200"
-              style={{
-                background: showAllChannels
-                  ? 'rgba(0,128,255,0.15)'
-                  : 'rgba(0,230,138,0.12)',
-                color: showAllChannels ? '#0080ff' : '#00e68a',
-                border: showAllChannels
-                  ? '1px solid rgba(0,128,255,0.3)'
-                  : '1px solid rgba(0,230,138,0.3)',
-              }}
+              onClick={() => setShowAllChannels((v) => !v)}
+              className="ml-auto flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium border transition-all"
+              style={
+                showAllChannels
+                  ? {
+                      background: "rgba(var(--pc-accent-rgb), 0.1)",
+                      borderColor: "rgba(var(--pc-accent-rgb), 0.3)",
+                      color: "var(--pc-accent-light)",
+                    }
+                  : {
+                      background: "rgba(0, 230, 138, 0.08)",
+                      borderColor: "rgba(0, 230, 138, 0.25)",
+                      color: "#34d399",
+                    }
+              }
               aria-label={
                 showAllChannels
-                  ? t('dashboard.filter_active')
-                  : t('dashboard.filter_all')
+                  ? t("dashboard.filter_active")
+                  : t("dashboard.filter_all")
               }
             >
               {showAllChannels
-                ? t('dashboard.filter_all')
-                : t('dashboard.filter_active')}
+                ? t("dashboard.filter_all")
+                : t("dashboard.filter_active")}
             </button>
           </div>
           <div className="space-y-2">
             {Object.entries(status.channels).length === 0 ? (
-              <p className="text-sm text-theme-faint">
-                {t('dashboard.no_channels')}
+              <p className="text-sm" style={{ color: "var(--pc-text-faint)" }}>
+                {t("dashboard.no_channels")}
               </p>
-            ) : (
-              (() => {
-                const entries = Object.entries(status.channels).filter(
-                  ([, active]) => showAllChannels || active,
+            ) : (() => {
+              const entries = Object.entries(status.channels).filter(
+                ([, active]) => showAllChannels || active
+              );
+              if (entries.length === 0) {
+                return (
+                  <p className="text-sm" style={{ color: "var(--pc-text-faint)" }}>
+                    {t("dashboard.no_active_channels")}
+                  </p>
                 );
-                if (entries.length === 0) {
-                  return (
-                    <p className="text-sm text-theme-faint">
-                      {t('dashboard.no_active_channels')}
-                    </p>
-                  );
-                }
-                return entries.map(([name, active]) => (
-                  <div
-                    key={name}
-                    className="flex items-center justify-between rounded-xl px-3 py-2.5 transition-all duration-300 hover:bg-[#0080ff08]"
-                    style={{
-                      background:
-                        'color-mix(in srgb, var(--color-accent-blue) 5%, var(--color-bg-card))',
-                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.16)',
-                    }}
+              }
+              return entries.map(([name, active]) => (
+                <div
+                  key={name}
+                  className="flex items-center justify-between py-2.5 px-3 rounded-xl transition-all"
+                  style={{ background: "var(--pc-bg-elevated)" }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--pc-hover)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--pc-bg-elevated)";
+                  }}
+                >
+                  <span
+                    className="text-sm font-medium capitalize"
+                    style={{ color: "var(--pc-text-primary)" }}
                   >
-                    <span className="text-sm font-medium capitalize text-theme-primary">
-                      {name}
+                    {name}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="status-dot"
+                      style={
+                        active
+                          ? {
+                              background: "var(--color-status-success)",
+                              boxShadow: "0 0 6px var(--color-status-success)",
+                            }
+                          : { background: "var(--pc-text-faint)" }
+                      }
+                    />
+                    <span className="text-xs" style={{ color: "var(--pc-text-muted)" }}>
+                      {active ? t("dashboard.active") : t("dashboard.inactive")}
                     </span>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full glow-dot ${
-                          active
-                            ? 'text-[#00e68a] bg-[#00e68a]'
-                            : 'text-[#334060] bg-[#334060]'
-                        }`}
-                      />
-                      <span className="text-xs text-theme-muted">
-                        {active
-                          ? t('dashboard.active')
-                          : t('dashboard.inactive')}
-                      </span>
-                    </div>
                   </div>
-                ));
-              })()
-            )}
+                </div>
+              ));
+            })()}
           </div>
         </div>
 
-        <div className="glass-card p-5 animate-slide-in-up">
-          <div className="mb-5 flex items-center gap-2">
-            <Activity className="h-5 w-5 text-[#0080ff]" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-theme-primary">
-              {t('dashboard.component_health')}
+        <div className="card p-5 animate-slide-in-up">
+          <div className="flex items-center gap-2 mb-5">
+            <Activity className="h-5 w-5" style={{ color: "var(--pc-accent)" }} />
+            <h2
+              className="text-sm font-semibold uppercase tracking-wider"
+              style={{ color: "var(--pc-text-primary)" }}
+            >
+              {t("dashboard.component_health")}
             </h2>
           </div>
           <div className="grid grid-cols-2 gap-3">
             {Object.entries(status.health.components).length === 0 ? (
-              <p className="col-span-2 text-sm text-theme-faint">
-                {t('dashboard.no_components')}
+              <p
+                className="text-sm col-span-2"
+                style={{ color: "var(--pc-text-faint)" }}
+              >
+                {t("dashboard.no_components")}
               </p>
             ) : (
               Object.entries(status.health.components).map(([name, comp]) => (
                 <div
                   key={name}
-                  className={`rounded-xl border p-3 transition-all duration-300 hover:scale-[1.02] ${healthBorder(comp.status)}`}
+                  className="rounded-2xl p-3 transition-all"
                   style={{
-                    background:
-                      'color-mix(in srgb, var(--color-accent-blue) 5%, var(--color-bg-card))',
+                    border: `1px solid ${healthBorder(comp.status)}`,
+                    background: healthBg(comp.status),
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "scale(1.02)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "scale(1)";
                   }}
                 >
-                  <div className="mb-1 flex items-center gap-2">
+                  <div className="flex items-center gap-2 mb-1">
                     <span
-                      className={`inline-block h-2 w-2 rounded-full ${healthColor(comp.status)} glow-dot`}
+                      className="status-dot"
+                      style={{
+                        background: healthColor(comp.status),
+                        boxShadow: `0 0 6px ${healthColor(comp.status)}`,
+                      }}
                     />
-                    <span className="truncate text-sm font-medium capitalize text-theme-primary">
+                    <span
+                      className="text-sm font-medium truncate capitalize"
+                      style={{ color: "var(--pc-text-primary)" }}
+                    >
                       {name}
                     </span>
                   </div>
-                  <p className="text-xs capitalize text-theme-muted">
+                  <p className="text-xs capitalize" style={{ color: "var(--pc-text-muted)" }}>
                     {comp.status}
                   </p>
                   {comp.restart_count > 0 && (
-                    <p className="mt-1 text-xs text-[#ffaa00]">
-                      {t('dashboard.restarts')}: {comp.restart_count}
+                    <p
+                      className="text-xs mt-1"
+                      style={{ color: "var(--color-status-warning)" }}
+                    >
+                      {t("dashboard.restarts")}: {comp.restart_count}
                     </p>
                   )}
                 </div>

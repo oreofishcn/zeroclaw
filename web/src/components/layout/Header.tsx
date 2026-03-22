@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { LogOut, MoonStar, Settings, SunMedium } from 'lucide-react';
+import { LogOut, Settings } from 'lucide-react';
 import { t } from '@/lib/i18n';
-import { useLocaleContext, useThemeContext } from '@/App';
+import { useLocaleContext } from '@/App';
 import { useAuth } from '@/hooks/useAuth';
 import { SettingsModal } from '@/components/SettingsModal';
 
@@ -23,7 +23,6 @@ export default function Header() {
   const location = useLocation();
   const { logout } = useAuth();
   const { locale, setAppLocale } = useLocaleContext();
-  const { theme, toggleAppTheme } = useThemeContext();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const titleKey = routeTitles[location.pathname] ?? 'nav.dashboard';
@@ -37,61 +36,61 @@ export default function Header() {
 
   return (
     <>
-      <header className="theme-header h-14 flex items-center justify-between px-6 animate-fade-in">
-        <div className="flex items-center gap-3">
-          <div className="hidden md:inline-flex theme-chip text-[11px] font-semibold">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent-blue)] glow-dot" />
-            Control Surface
-          </div>
-          <h1 className="text-lg font-semibold text-theme-primary tracking-tight">{pageTitle}</h1>
-        </div>
+      <header className="h-14 flex items-center justify-between px-6 border-b animate-fade-in" style={{ background: 'var(--pc-bg-surface)', borderColor: 'var(--pc-border)', backdropFilter: 'blur(12px)', }}>
+        {/* Page title */}
+        <h1 className="h-9 leading-9 text-lg font-semibold tracking-tight" style={{ color: 'var(--pc-text-primary)' }}>{pageTitle}</h1>
 
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={toggleAppTheme}
-            className="theme-toggle group inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-300"
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          >
-            <span className="theme-toggle-icon">
-              {theme === 'dark' ? (
-                <SunMedium className="h-3.5 w-3.5" />
-              ) : (
-                <MoonStar className="h-3.5 w-3.5" />
-              )}
-            </span>
-            <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
-          </button>
-
+        {/* Right-side controls */}
+        <div className="flex items-center gap-2 h-9">
+          {/* Settings */}
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
-            className="theme-header-button inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-300"
+            className="h-9 w-9 flex items-center justify-center rounded-xl text-xs transition-all"
+            style={{ color: 'var(--pc-text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--pc-text-primary)'; e.currentTarget.style.background = 'var(--pc-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--pc-text-muted)'; e.currentTarget.style.background = 'transparent'; }}
+            aria-label={t('settings.title')}
           >
             <Settings className="h-3.5 w-3.5" />
-            <span>{t('settings.title')}</span>
           </button>
 
+          {/* Language switcher */}
           <button
             type="button"
             onClick={toggleLanguage}
-            className="theme-header-button px-3 py-1 rounded-lg text-xs font-semibold transition-all duration-300"
-            title={
-              locale === 'en'
-                ? 'Switch to Chinese'
-                : locale === 'zh'
-                  ? 'Switch to Turkish'
-                  : 'Switch to English'
-            }
+            className="h-9 px-3 rounded-xl text-xs font-semibold border transition-all flex items-center"
+            style={{
+              borderColor: 'var(--pc-border)',
+              color: 'var(--pc-text-secondary)',
+              background: 'var(--pc-bg-elevated)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = 'var(--pc-accent-dim)';
+              e.currentTarget.style.color = 'var(--pc-text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'var(--pc-border)';
+              e.currentTarget.style.color = 'var(--pc-text-secondary)';
+            }}
           >
             {locale === 'en' ? 'EN' : locale === 'zh' ? 'ZH' : 'TR'}
           </button>
 
+          {/* Logout */}
           <button
             type="button"
             onClick={logout}
-            className="theme-logout-button flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-300"
+            className="h-9 px-3 rounded-xl text-xs transition-all flex items-center gap-1.5"
+            style={{ color: 'var(--pc-text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#f87171';
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--pc-text-muted)';
+              e.currentTarget.style.background = 'transparent';
+            }}
           >
             <LogOut className="h-3.5 w-3.5" />
             <span>{t('auth.logout')}</span>
