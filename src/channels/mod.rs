@@ -2746,6 +2746,9 @@ async fn process_channel_message(
         break loop_result;
     };
 
+    // Close the producer side before awaiting the updater so draft-capable
+    // channels can finish draining updates and deliver the final response.
+    drop(delta_tx);
     if let Some(handle) = draft_updater {
         let _ = handle.await;
     }
@@ -5514,6 +5517,11 @@ mod tests {
         sent_messages: tokio::sync::Mutex<Vec<String>>,
     }
 
+    #[derive(Default)]
+    struct DraftRecordingChannel {
+        draft_events: tokio::sync::Mutex<Vec<String>>,
+    }
+
     #[async_trait::async_trait]
     impl Channel for TelegramRecordingChannel {
         fn name(&self) -> &str {
@@ -5570,6 +5578,74 @@ mod tests {
         }
 
         async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Channel for DraftRecordingChannel {
+        fn name(&self) -> &str {
+            "web"
+        }
+
+        async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+            self.draft_events
+                .lock()
+                .await
+                .push(format!("send:{}:{}", message.recipient, message.content));
+            Ok(())
+        }
+
+        async fn listen(
+            &self,
+            _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn start_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn supports_draft_updates(&self) -> bool {
+            true
+        }
+
+        async fn send_draft(&self, message: &SendMessage) -> anyhow::Result<Option<String>> {
+            self.draft_events.lock().await.push(format!(
+                "draft_start:{}:{}",
+                message.recipient, message.content
+            ));
+            Ok(Some("draft-1".to_string()))
+        }
+
+        async fn update_draft(
+            &self,
+            recipient: &str,
+            message_id: &str,
+            text: &str,
+        ) -> anyhow::Result<()> {
+            self.draft_events
+                .lock()
+                .await
+                .push(format!("draft_update:{recipient}:{message_id}:{text}"));
+            Ok(())
+        }
+
+        async fn finalize_draft(
+            &self,
+            recipient: &str,
+            message_id: &str,
+            text: &str,
+        ) -> anyhow::Result<()> {
+            self.draft_events
+                .lock()
+                .await
+                .push(format!("draft_finalize:{recipient}:{message_id}:{text}"));
             Ok(())
         }
     }
@@ -10194,6 +10270,103 @@ This is an example JSON object for profile settings."#;
             sent_messages.len(),
             2,
             "both Slack thread messages should complete, got: {sent_messages:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_dispatch_closes_draft_stream_before_waiting_for_updater() {
+        let channel_impl = Arc::new(DraftRecordingChannel::default());
+        let channel: Arc<dyn Channel> = channel_impl.clone();
+
+        let mut channels_by_name = HashMap::new();
+        channels_by_name.insert(channel.name().to_string(), channel);
+
+        let runtime_ctx = Arc::new(ChannelRuntimeContext {
+            channels_by_name: Arc::new(channels_by_name),
+            provider: Arc::new(HistoryCaptureProvider::default()),
+            default_provider: Arc::new("test-provider".to_string()),
+            memory: Arc::new(NoopMemory),
+            tools_registry: Arc::new(vec![]),
+            observer: Arc::new(NoopObserver),
+            system_prompt: Arc::new("test-system-prompt".to_string()),
+            model: Arc::new("test-model".to_string()),
+            temperature: 0.0,
+            auto_save_memory: false,
+            max_tool_iterations: 10,
+            min_relevance_score: 0.0,
+            conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+            pending_new_sessions: Arc::new(Mutex::new(HashSet::new())),
+            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            route_overrides: Arc::new(Mutex::new(HashMap::new())),
+            api_key: None,
+            api_url: None,
+            reliability: Arc::new(crate::config::ReliabilityConfig::default()),
+            provider_runtime_options: providers::ProviderRuntimeOptions::default(),
+            workspace_dir: Arc::new(std::env::temp_dir()),
+            prompt_config: Arc::new(crate::config::Config::default()),
+            message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+            interrupt_on_new_message: InterruptOnNewMessageConfig {
+                telegram: false,
+                slack: false,
+                discord: false,
+                mattermost: false,
+                matrix: false,
+            },
+            multimodal: crate::config::MultimodalConfig::default(),
+            hooks: None,
+            non_cli_excluded_tools: Arc::new(Vec::new()),
+            autonomy_level: AutonomyLevel::default(),
+            tool_call_dedup_exempt: Arc::new(Vec::new()),
+            model_routes: Arc::new(Vec::new()),
+            query_classification: crate::config::QueryClassificationConfig::default(),
+            ack_reactions: true,
+            show_tool_calls: true,
+            session_store: None,
+            approval_manager: Arc::new(ApprovalManager::for_non_interactive(
+                &crate::config::AutonomyConfig::default(),
+            )),
+            activated_tools: None,
+            cost_tracking: None,
+            pacing: crate::config::PacingConfig::default(),
+        });
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
+        tx.send(traits::ChannelMessage {
+            id: "msg-1".to_string(),
+            sender: "alice".to_string(),
+            reply_target: "session-1".to_string(),
+            content: "hello".to_string(),
+            channel: "web".to_string(),
+            timestamp: 1,
+            thread_ts: None,
+            interruption_scope_id: None,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            run_message_dispatch_loop(rx, runtime_ctx, 1),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "draft-enabled dispatch loop should not hang"
+        );
+
+        let events = channel_impl.draft_events.lock().await;
+        assert!(
+            events
+                .iter()
+                .any(|event| event == "draft_start:session-1:..."),
+            "expected draft start event, got: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event == "draft_finalize:session-1:draft-1:response-1"),
+            "expected draft finalize event, got: {events:?}"
         );
     }
 }
